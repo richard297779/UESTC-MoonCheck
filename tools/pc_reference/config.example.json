@@ -1,0 +1,33 @@
+{
+  "_说明": "复制本文件为 config.json 后填写。config.json / out/ 已在 .gitignore 中，切勿提交或外传。",
+
+  "student_id": "2023XXXXXXXXX",
+  "password": "PUT_YOUR_PASSWORD_HERE",
+
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+
+  "_browser_fingerprint": "抓包中 MULTIFACTOR_BROWSER_FINGERPRINT 的值（32 位大写 HEX）。V3 实验用它决定免二次验证。",
+  "browser_fingerprint": "PUT_CAPTURED_FINGERPRINT_HERE",
+
+  "_session_cookie": "抓包中 jzsz.uestc.edu.cn 的 SESSION 值。填了就能直接跑 V1（无需登录）。",
+  "session_cookie": "PUT_CAPTURED_SESSION_HERE",
+
+  "app_id": 294,
+
+  "_location": "★ 请替换为你自己宿舍的实测坐标（抓包里那次成功打卡请求中的 latitude/longitude）。下面填的是平台公布的打卡点中心，仅作可运行的示例。",
+  "location": {
+    "latitude": 30.75498,
+    "longitude": 103.933883,
+    "reverse_geocode": "四川省成都市郫都区",
+    "coordinate_system": "gcj02",
+    "accuracy": 86,
+    "location_duration_ms": 1189,
+    "network_type": "4g"
+  },
+
+  "_fallback_location": "打卡点官方中心（若上面的坐标被判超范围，可改用这个，距离 0 m）",
+  "fallback_location": {
+    "latitude": 30.75498,
+    "longitude": 103.933883
+  }
+}

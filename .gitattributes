@@ -1,0 +1,17 @@
+# 默认按文本处理，统一以 LF 存入仓库
+* text=auto eol=lf
+
+# 明确各类文本文件用 LF
+*.c     text eol=lf
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.py    text eol=lf
+*.js    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.csv   text eol=lf
+
+# 二进制文件不做换行处理
+*.png   binary
+*.jpg   binary
+*.pdf   binary

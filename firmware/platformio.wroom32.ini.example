@@ -1,0 +1,36 @@
+; ============================================================================
+;  经典 ESP32（WROOM-32 / WROOM-32U，4 MB Flash，无 PSRAM）构建环境
+;  —— 本文件**不会被 PlatformIO 读取**（后缀 .example），仅作备用配置存放处。
+;
+;  为什么默认不启用：
+;    VSCode 的 PlatformIO 插件展开 Project Tasks 中某个 env 时会先解析其依赖；
+;    经典 ESP32 需要另一套工具链 toolchain-xtensa-esp32（约 100 MB），
+;    未安装时插件会静默下载 → 界面表现为"点开 esp32-wroom-32 就一直 loading"。
+;
+;  启用步骤（三选一）：
+;    A. 把下面整段复制到 platformio.ini 末尾，保存 → Ctrl+Shift+P → "PlatformIO: Reload"
+;       （首次构建会自动下载工具链，期间任务树可能转圈，属正常，等它完成即可）
+;    B. 先手动装好工具链再启用，避免构建时卡住：
+;         pio pkg install -g -p "platformio/toolchain-xtensa-esp32"
+;    C. 不改文件，直接命令行构建（同样会触发一次工具链下载）：
+;         先把本文件内容并入 platformio.ini，再 pio run -e esp32-wroom-32 -t upload
+;
+;  硬件差异（代码已自动适配，无需改源码）：
+;    · 无 PSRAM → 日志环形缓冲自动退回内部堆（logger.cpp 里已有回退）
+;    · LED 自动选 GPIO2 普通 LED（app_types.h 按编译目标判断；也可 -DWANAN_LED_PIN=-1 关闭）
+;    · 没有原生 USB-Serial/JTAG → 需外接 CP2102/CH340，进下载模式按 BOOT+RST
+;    · 分区表 partitions/partitions_4mb.csv（双 OTA 槽各 1.56 MB，当前 app ≈ 1.15 MB）
+; ============================================================================
+
+[env:esp32-wroom-32]
+board     = esp32dev
+board_build.flash_size    = 4MB
+board_upload.flash_size   = 4MB
+board_upload.maximum_size = 4194304
+board_build.partitions    = partitions/partitions_4mb.csv
+build_flags =
+  ${env.build_flags}
+  ; 经典 ESP32 没有 USB-Serial/JTAG，绝不能定义 ARDUINO_USB_* / BOARD_HAS_PSRAM
+; 若同时插了多块板，写死端口更保险（pio device list 查；或用 --upload-port 覆盖）
+;upload_port   = COM7
+;monitor_port  = COM7
