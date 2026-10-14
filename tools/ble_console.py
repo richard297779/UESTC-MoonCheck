@@ -10,7 +10,7 @@
 用法：
     python tools/ble_console.py                      # 只有一台时自动连接；多台会列出让选
     python tools/ble_console.py --list               # 列出所有可见设备（名字/RSSI/MAC）
-    python tools/ble_console.py --name WANAN-7850    # 按广播名连接（推荐多板使用）
+    python tools/ble_console.py --name WANAN-1A2B    # 按广播名连接（推荐多板使用）
     python tools/ble_console.py --index 0            # 按 --list 的序号连接
     python tools/ble_console.py --addr AA:BB:CC:DD:EE:FF
     python tools/ble_console.py hello status probe   # 依次执行若干命令后退出
@@ -26,6 +26,7 @@
     time                       设备时间 / 是否在打卡窗口内
     logs [n]                   拉取最近 n 行日志
     wifi <ssid> [pass]         配置 WiFi（会立即连接）；开放网络省略 pass
+    scan                       扫描周边 AP（设备只能看到 2.4 GHz：channel 1–13）
     netcheck                   校园网连通性体检：请求 generate_204
                                （204=已放行；302/200+HTML=被 Portal 劫持，需网页认证）
     auth <user> <pass> [bfp]   配置学号 / 密码 / 浏览器指纹
@@ -196,6 +197,9 @@ class Console:
                 await self.send({"op": "session.set", "value": args[0]})
         elif command == "logs":
             await self.send({"op": "logs", "n": int(args[0]) if args else 30})
+        elif command == "scan":
+            # 扫描周边 AP（只看 2.4 GHz，channel 1-13）；等价 raw {"op":"wifi.scan"}
+            await self.send({"op": "wifi.scan"})
         elif command == "wifi":
             if not args:
                 print("  用法：wifi <ssid> [pass]（开放网络可省略 pass，例如校园网 UESTC-WiFi）")
@@ -323,7 +327,7 @@ def print_devices(devices: list) -> None:
     print("  序号  广播名            RSSI   地址")
     for index, (name, address, rssi, _device) in enumerate(devices):
         print(f"  {index:>4}  {name:<16} {str(rssi):>5}   {address}")
-    print("\n  选择方式：--name WANAN-7850   /   --index 0   /   --addr 50:78:7D:15:98:9D")
+    print("\n  选择方式：--name WANAN-1A2B   /   --index 0   /   --addr AA:BB:CC:DD:EE:FF")
     print("  提示：广播名后缀 = MAC 末两字节；`hello` 指令会回报完整 MAC / Flash / PSRAM，")
     print("        串口侧对应关系用 tools/board_id.py 查（COM 口 ↔ MAC ↔ 芯片型号）。\n")
 
@@ -436,7 +440,7 @@ async def connect_with_retry(targets: list, timeout: float, attempts: int = 3) -
 async def main() -> int:
     parser = argparse.ArgumentParser(description="晚安成电终端 BLE 调试台")
     parser.add_argument("--addr", help="直接指定设备 MAC 地址（跳过扫描）")
-    parser.add_argument("--name", help="按广播名选择设备（如 WANAN-7850，可只写前缀）")
+    parser.add_argument("--name", help="按广播名选择设备（如 WANAN-1A2B，可只写前缀）")
     parser.add_argument("--index", type=int, help="按扫描结果序号选择（先配合 --list 看列表）")
     parser.add_argument("--list", action="store_true", help="只列出所有可见设备后退出")
     parser.add_argument("--scan-timeout", type=float, default=15.0, help="扫描秒数（默认 15）")

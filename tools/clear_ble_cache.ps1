@@ -11,7 +11,7 @@
   此时用本脚本按设备名或 MAC 直接删除设备节点（等价于清缓存）。
 
 .PARAMETER Mac
-  设备 MAC，例如 50:78:7D:15:98:9D（可省略，默认按名称匹配）。
+  设备 MAC，例如 AA:BB:CC:DD:EE:FF（可省略，默认按名称匹配）。
 
 .PARAMETER Name
   设备名关键字，默认 WANAN。
@@ -24,7 +24,7 @@
   powershell -ExecutionPolicy Bypass -File tools\clear_ble_cache.ps1
 
   # 2) 删除（管理员 PowerShell）
-  powershell -ExecutionPolicy Bypass -File tools\clear_ble_cache.ps1 -Mac 50:78:7D:15:98:9D -Remove
+  powershell -ExecutionPolicy Bypass -File tools\clear_ble_cache.ps1 -Mac AA:BB:CC:DD:EE:FF -Remove
 #>
 param(
   [string]$Mac = '',

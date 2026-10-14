@@ -26,7 +26,6 @@ SYNC_DIRS = ['firmware', 'tools', 'docs']
 SKIP_SUBSTR = [
     os.path.join('firmware', '.pio'),
     os.path.join('firmware', '.vscode'),
-    'platformio.wroom32.ini.example',
     '__pycache__',
     os.path.join('tools', 'pc_reference', 'config.json'),
     os.path.join('tools', 'pc_reference', 'out'),
@@ -61,7 +60,7 @@ def main() -> int:
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
 
-    copied, skipped_manual, missing_dest = [], [], []
+    copied, skipped_manual, created_dirs = [], [], set()
     for base in SYNC_DIRS:
         src_dir = os.path.join(ROOT, base)
         if not os.path.isdir(src_dir):
@@ -73,25 +72,26 @@ def main() -> int:
                 rel = os.path.relpath(src, ROOT)
                 if should_skip(rel):
                     continue
-                dst = os.path.join(DEST, rel)
+                # ★ 关键闸门：这些文件的公开副本已脱敏，**绝不允许自动覆盖**
                 if rel in MANUAL_MERGE:
                     skipped_manual.append(rel)
                     continue
-                if not os.path.isdir(os.path.dirname(dst)):
-                    missing_dest.append(rel)
-                    continue
+                dst = os.path.join(DEST, rel)
+                parent = os.path.dirname(dst)
+                if not os.path.isdir(parent):
+                    # 公开副本里还没有这个目录（例如新增的 docs/assets/...）→ 建出来再复制
+                    os.makedirs(parent, exist_ok=True)
+                    created_dirs.add(os.path.relpath(parent, DEST))
                 copied.append(rel)
                 if not args.dry_run:
                     shutil.copy2(src, dst)
 
     print('复制 %d 个文件%s' % (len(copied), '（dry-run，未实际写入）' if args.dry_run else ''))
+    if created_dirs:
+        print('新建目录: ' + ', '.join(sorted(created_dirs)))
     if skipped_manual:
         print('\n⚠ 以下文件公开副本已脱敏，**不做自动覆盖**，改动后请手工合并：')
         for item in sorted(skipped_manual):
-            print('   - ' + item)
-    if missing_dest:
-        print('\n⚠ 目标目录不存在，未复制（公开副本里没有对应位置，请确认是否应该新增）：')
-        for item in missing_dest[:10]:
             print('   - ' + item)
     print('\n下一步： python tools/check_repo_hygiene.py --strict')
     return 0

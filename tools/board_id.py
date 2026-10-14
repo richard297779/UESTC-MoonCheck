@@ -25,7 +25,7 @@ CHIP_RE = re.compile(r"(?:Chip is|Detecting chip type\.\.\.)\s*([A-Za-z0-9\-]+)"
 FLASH_RE = re.compile(r"Detected flash size:\s*([0-9]+)\s*MB", re.I)
 
 ENV_HINT = {
-    "ESP32": "esp32-wroom-32",
+    "ESP32": "esp-wroom-32",
     "ESP32-S3": "esp32-s3-devkitc-1",
     "ESP32S3": "esp32-s3-devkitc-1",
     "ESP32-C3": "esp32-c3（需把 net_task 绑核改为 core 0）",
