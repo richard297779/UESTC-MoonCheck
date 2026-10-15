@@ -12,10 +12,12 @@ namespace {
 const char* const kTag = "http_client";
 
 /// @brief 单行读取上限（响应头）。
-constexpr size_t kMaxLineLength = 1024;
+/// @note 登录页/票据响应可能带很长的 CSP / Set-Cookie 头，留足余量。
+constexpr size_t kMaxLineLength = 2048;
 
 /// @brief 无数据时的空闲等待上限：超过即认为响应结束。
-constexpr uint32_t kIdleTimeoutMs = 4000;
+/// @note 经典 ESP32（无 PSRAM）TLS 吞吐较低，4 s 容易在正文中途误判"结束"导致截断。
+constexpr uint32_t kIdleTimeoutMs = 8000;
 
 /// @brief 判断是否 3xx。
 bool isRedirect(int status) {
@@ -149,14 +151,23 @@ Result HttpClient::begin(const String& userAgent, uint8_t tlsMode) {
 
 bool HttpClient::readLine(Client& client, String& line, uint32_t deadline) {
   line = "";
+  // 超过上限时**丢弃内容但继续吃到行尾**：绝不能因为某一行太长就提前返回，
+  // 否则头部解析会中断、正文从错误的偏移开始读（症状正是"页面读到了却找不到字段"）。
+  bool overflow = false;
   while (millis() < deadline) {
     if (client.available() > 0) {
       const int c = client.read();
       if (c < 0) continue;
       if (c == '\n') return true;
       if (c != '\r') {
-        line += static_cast<char>(c);
-        if (line.length() > kMaxLineLength) return false;
+        if (!overflow) {
+          line += static_cast<char>(c);
+          if (line.length() > kMaxLineLength) {
+            overflow = true;
+            LOG_W(kTag, "line longer than %u bytes, content discarded",
+                  static_cast<unsigned>(kMaxLineLength));
+          }
+        }
       }
       continue;
     }

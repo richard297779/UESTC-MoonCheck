@@ -28,7 +28,8 @@ firmware/
 | --- | --- | --- | --- | --- | --- |
 | `esp32-s3-devkitc-1` | **单人版**（`default_envs`） | ESP32-S3-N16R8 | 16 MB / 8 MB OPI | `partitions_16mb.csv` | WS2812 @ GPIO48 |
 | `esp32-s3-multiuser` | **多人顺序打卡版**（同一块 S3，只多 `-DWANAN_MULTIUSER=1`） | ESP32-S3-N16R8 | 16 MB / 8 MB OPI | `partitions_16mb.csv` | 同上 |
-| `esp32-wroom-32`（示例见 `platformio.wroom32.ini.example`） | 经典 ESP32-WROOM-32 | 4 MB / 无 | `partitions_4mb.csv` | 普通 LED @ GPIO2 |
+| `esp32-wroom-32-COM6` / `esp32-wroom-32-COM7` | 经典 ESP32 **单人版**（按 COM 口各建一个 env） | ESP32-WROOM-32 | 4 MB / 无 | `partitions_4mb.csv` | 普通 LED @ GPIO2 |
+| `esp32-wroom-32-multiuser-COM6` / `-COM7` | 经典 ESP32 **多人版** | ESP32-WROOM-32 | 4 MB / 无 | `partitions_4mb.csv` | 普通 LED @ GPIO2 |
 
 > 单人版与多人版**共享全部代码**，只多一个编译宏（影响：多人开关默认值 + 版本号后缀 `-multi`）。
 > 两者都能用 `multi.set` 现场切换 ⇒ **回退到单人行为不需要重刷**。多人设计见 `docs/multi-user-design.md`。

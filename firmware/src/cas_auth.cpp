@@ -18,20 +18,43 @@ constexpr const char* kIdasHost = "idas.uestc.edu.cn";
 /// @brief 指纹 Cookie 有效期（10 年；服务器实际下发到 2094 年）。
 constexpr long kFingerprintLifetimeSeconds = 315360000L;
 
-/// @brief 页面中提取 execution 的标记。
-constexpr const char* kExecutionMarker = "name=\"execution\" value=\"";
-/// @brief 页面中提取 pwdEncryptSalt 的标记。
-constexpr const char* kSaltMarker = "id=\"pwdEncryptSalt\" value=\"";
+/// @brief 页面中定位字段的**锚点**（只锚定字段名，不假设属性顺序/引号写法）。
+constexpr const char* kExecutionAnchor = "name=\"execution\"";
+constexpr const char* kSaltAnchor = "pwdEncryptSalt";
 
-/// @brief 从 html 中提取 marker 之后第一个双引号包裹的值。
-bool extractQuotedAfter(const String& html, const char* marker, String& out) {
-  const int at = html.indexOf(marker);
+/// @brief 登录页约 25 KB；经典 ESP32 的 TLS 吞吐较低，给更宽的超时与重试。
+constexpr uint32_t kLoginPageTimeoutMs = 30000;
+constexpr uint8_t kLoginPageAttempts = 3;
+
+/// @brief 在 anchor 附近（±200 字符）取 `value="…"` 的内容。
+/// @note 兼容 `<input id="pwdEncryptSalt" value="X">` 与 `<input value="X" id="pwdEncryptSalt">`
+///       两种属性顺序；旧实现要求 marker 完全连续，页面写法稍有变化就会误报"字段不存在"。
+bool extractValueNear(const String& html, const char* anchor, String& out) {
+  const int at = html.indexOf(anchor);
   if (at < 0) return false;
-  const int valueStart = at + static_cast<int>(strlen(marker));
-  const int valueEnd = html.indexOf('"', valueStart);
-  if (valueEnd < 0 || valueEnd <= valueStart) return false;
-  out = html.substring(valueStart, valueEnd);
-  return true;
+  const int anchorEnd = at + static_cast<int>(strlen(anchor));
+
+  // 1) 向后找 value="
+  const int fwd = html.indexOf("value=\"", at);
+  if (fwd >= 0 && fwd - at <= 200) {
+    const int start = fwd + 7;
+    const int end = html.indexOf('"', start);
+    if (end > start) {
+      out = html.substring(start, end);
+      return true;
+    }
+  }
+  // 2) 向前找（属性顺序相反的写法）
+  const int bwd = html.lastIndexOf("value=\"", at);
+  if (bwd >= 0 && at - bwd <= 200) {
+    const int start = bwd + 7;
+    const int end = html.indexOf('"', start);
+    if (end > start && end <= anchorEnd) {
+      out = html.substring(start, end);
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -98,32 +121,67 @@ Result CasAuth::fetchLoginPage(String& outExecution, String& outSalt) {
   if (m_http == nullptr) return Result::NotReady;
 
   setState(AuthState::FetchingLoginPage, "fetching login page");
-  HttpRequest request;
-  request.method = "GET";
-  request.url = loginUrl();
-  request.addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-  request.addHeader("Upgrade-Insecure-Requests", "1");
 
-  HttpResponse response;
-  const Result result = m_http->request(request, response);
-  if (result != Result::Ok) {
-    setState(AuthState::Failed, "network error");
-    return result;
+  Result lastResult = Result::ApiChanged;
+  String lastDetail = "login page parse failed";
+
+  for (uint8_t attempt = 1; attempt <= kLoginPageAttempts; attempt++) {
+    HttpRequest request;
+    request.method = "GET";
+    request.url = loginUrl();
+    request.timeoutMs = kLoginPageTimeoutMs;
+    request.addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    request.addHeader("Upgrade-Insecure-Requests", "1");
+
+    HttpResponse response;
+    const Result result = m_http->request(request, response);
+    if (result != Result::Ok) {
+      lastResult = result;
+      lastDetail = "login page network error";
+      LOG_W(kTag, "login page fetch failed (try %u): %s", attempt, resultName(result));
+      vTaskDelay(pdMS_TO_TICKS(800));
+      continue;
+    }
+    if (response.status != 200) {
+      setState(AuthState::Failed, "login page http " + String(response.status));
+      return Result::HttpError;  // 状态码不对，重试无意义
+    }
+
+    const bool okExec = extractValueNear(response.body, kExecutionAnchor, outExecution);
+    const bool okSalt = extractValueNear(response.body, kSaltAnchor, outSalt);
+    if (okExec && okSalt) {
+      LOG_I(kTag, "login page parsed: %u B (try %u), execution=%s salt=%s",
+            static_cast<unsigned>(response.body.length()), attempt, outExecution.c_str(),
+            outSalt.length() > 0 ? "ok" : "empty");
+      return Result::Ok;
+    }
+
+    // ★ 诊断：区分「响应被截断」与「页面结构变了」——两者处置完全不同
+    const bool rawHasSalt = response.body.indexOf(kSaltAnchor) >= 0;
+    const long declared = response.headerValue("Content-Length").toInt();
+    // freeHeap 很关键：经典 ESP32 无 PSRAM，25 KB 的 String 可能分配不出后续增量，
+    // String::concat 失败是**静默**的，症状与网络截断一模一样。
+    LOG_W(kTag,
+          "login page parse failed (try %u): got=%u B declared=%ld exec=%d salt=%d "
+          "rawExec=%d rawSalt=%d freeHeap=%u B",
+          attempt, static_cast<unsigned>(response.body.length()), declared, okExec ? 1 : 0,
+          okSalt ? 1 : 0, response.body.indexOf("execution") >= 0 ? 1 : 0, rawHasSalt ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()));
+
+    if (rawHasSalt) {
+      // 字段在页面里但取不出来 → 是页面结构问题，重试没有意义
+      lastResult = Result::ApiChanged;
+      lastDetail = "login page structure changed (pwdEncryptSalt format)";
+      break;
+    }
+    // 页面里没有该字段 → 大概率被截断，换个超时再试
+    lastResult = Result::NetworkError;
+    lastDetail = "login page truncated";
+    vTaskDelay(pdMS_TO_TICKS(800));
   }
-  if (response.status != 200) {
-    setState(AuthState::Failed, "login page http " + String(response.status));
-    return Result::HttpError;
-  }
-  if (!extractQuotedAfter(response.body, kExecutionMarker, outExecution)) {
-    setState(AuthState::Failed, "execution not found");
-    return Result::ApiChanged;
-  }
-  if (!extractQuotedAfter(response.body, kSaltMarker, outSalt)) {
-    setState(AuthState::Failed, "pwdEncryptSalt not found");
-    return Result::ApiChanged;
-  }
-  LOG_I(kTag, "login page parsed: execution=%s salt=%s", outExecution.c_str(), outSalt.c_str());
-  return Result::Ok;
+
+  setState(AuthState::Failed, lastDetail);
+  return lastResult;
 }
 
 Result CasAuth::submitLogin(const String& execution, const String& salt, HttpResponse& response) {

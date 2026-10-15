@@ -38,6 +38,9 @@ python -c "import bleak; print('bleak OK', bleak.__version__)"
 
 > 💡 以后每次用之前都要先 `conda activate WANAN`。
 
+<!-- 配图 1：终端里 conda activate 后执行 pip install bleak 成功的截图 -->
+![配图 1：安装 bleak](assets/quickstart/01-pip-install-bleak.png)
+
 ---
 
 ## 2. 硬件与供电（⚠️ 必须 5V）
@@ -51,6 +54,9 @@ python -c "import bleak; print('bleak OK', bleak.__version__)"
 | 接线供电（DIY） | USB 的 **红=5V、黑=GND** 接板子 `5V`/`GND`；**别接错**，接反会烧 |
 
 正常上电的现象：**板载灯亮起 / 蓝牙能被搜到**。如果板子反复重启（灯一闪一闪），先换一根线或换 5V/1A 头。
+
+<!-- 配图 2：板子接电的正确示范（标注 5V 与 GND 位置；用 USB 直插电脑的情况也拍一张） -->
+![配图 2：5V 供电方式](assets/quickstart/02-power-5v.png)
 
 ---
 
@@ -69,20 +75,20 @@ python -c "import bleak; print('bleak OK', bleak.__version__)"
 
 > 这个值决定了设备会不会向你要短信验证码。**必须用你平时打卡、并且登录过的那个浏览器**来取。
 
-1. 用 **Google Chrome** 打开：`https://idas.uestc.edu.cn/`，正常登录统一身份认证
+1. 用 **Google Chrome** 打开：`https://jzsz.uestc.edu.cn/`，正常登录统一身份认证
    （如果它要求"二次验证/短信验证码"，勾选**"信任此浏览器/不再提示"**再完成，这样才会生成指纹值）。
 
-<!-- 配图 3：Chrome 打开 https://idas.uestc.edu.cn/ 并已登录成功的首页 -->
+<!-- 配图 3：Chrome 打开 jzsz.uestc.edu.cn 并已登录成功的首页 -->
 ![配图 3：登录统一身份认证](assets/quickstart/03-login-jzsz.png)
 
-2. 按 **F12** 打开 DevTools → 切到 **应用(Application)** 标签 → 左侧 **Cookie** → 回到 `https://idas.uestc.edu.cn`。
+2. 按 **F12** 打开 DevTools → 切到 **应用(Application)** 标签 → 左侧 **Cookie** → 点开 `https://idas.uestc.edu.cn`。
 3. 找到名为 **`MULTIFACTOR_BROWSER_FINGERPRINT`** 的一条，复制它的**值**（32 位十六进制，形如 `0 1 2 3 A B …`）。
 
 <!-- 配图 4：DevTools → Application → Cookies → idas.uestc.edu.cn，高亮 MULTIFACTOR_BROWSER_FINGERPRINT 这一行 -->
 ![配图 4：在 Application → Cookies 里找到指纹值](assets/quickstart/04-cookie-fingerprint.png)
 
 > ⚠️ **它是 HttpOnly**：在 Console 里输 `document.cookie` **看不到它**，必须用上面的 Application → Cookies 面板。
-> 🔎 备用取法：DevTools → **网络(Network)** → 过滤 `bfp` → 按F5刷新页面 → 找一条 `GET /authserver/bfp/info?bfp=XXXXXXXX...` 的请求，URL 里 `bfp=` 后面那串就是它。
+> 🔎 备用取法：DevTools → **网络(Network)** → 过滤 `bfp` → 找一条 `GET /authserver/bfp/info?bfp=XXXXXXXX...` 的请求，URL 里 `bfp=` 后面那串就是它。
 
 <!-- 配图 5：Network 里 bfp/info 请求的 URL 参数（备用取法） -->
 ![配图 5：备用取法：bfp/info 请求](assets/quickstart/05-bfp-info-url.png)
@@ -100,8 +106,8 @@ python -c "import bleak; print('bleak OK', bleak.__version__)"
 <!-- 配图 6：宿舍里打开晚安成电页面，能看到地图与"请打卡" -->
 ![配图 6：晚安成电打卡页](assets/quickstart/06-h5-page.png)
 
-2. 按 **F12** → **网络(Network)** → 顶部过滤框输入 `reverse` → 按F5刷新 → 找到形如
-   `reverse?lat=xx.xxxxxx&lng=xxx.xxxxxx` 的请求。
+2. 按 **F12** → **网络(Network)** → 顶部过滤框输入 `reverse` → 找到形如
+   `reverse?lat=30.7xxxxx&lng=103.9xxxxx` 的请求。
 3. 点开它，在 **标头(Headers) → 请求网址(Request URL)** 里复制 `lat=` 和 `lng=` 后面的两个数字。
 
 <!-- 配图 7：Network 过滤 reverse，选中该请求，右侧"标头"里高亮 Request URL 的 lat/lng -->
@@ -136,7 +142,7 @@ python ble_console.py --name WANAN-XXXX
 ### 6.2 依次输入这 5 条命令
 
 ```
-wifi <宿舍WiFi名> [WiFi密码]
+wifi <宿舍WiFi名> <WiFi密码>
 auth <你的学号> <统一身份认证密码> <第4步取到的32位指纹>
 loc <lat> <lng> 四川省成都市郫都区
 sched 22:00 23:30 30
@@ -147,11 +153,14 @@ auto on
 
 ```
 wifi Dorm-2.4G mywifi123
-auth 2027XXXXXXX ************ 0123456789ABCDEF0123456789ABCDEF
-loc 30.123456 103.123123 四川省成都市郫都区
+auth 2023XXXXXXX ************ 0123456789ABCDEF0123456789ABCDEF
+loc 30.753456 103.934123 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
 ```
+
+<!-- 配图 9：控制台里逐条输入 wifi/auth/loc/sched/auto 并都收到 ok 回执 -->
+![配图 9：完成配置](assets/quickstart/09-config-commands.png)
 
 **要点**
 
@@ -316,3 +325,5 @@ status
 | 9 | `09-config-commands.png` | 依次输入 wifi/auth/loc/sched/auto 都回 ok |
 | 10 | `10-chain-ok.png` | `chain 0` 回执，高亮 `appEntry:true` |
 | 11 | `11-status-done.png` | `status` 回执，高亮 `last.ok:true` 与 `nextRun` |
+
+> 图片放到与本文件同级的 `assets/quickstart/` 目录下即可；如果只发单文件，把图片改成在线链接或直接删掉 `![...]` 行也不影响阅读。

@@ -234,7 +234,8 @@ python verify.py status      # 只读：读今日打卡状态（零风险）
    | --- | --- |
    | `esp32-s3-devkitc-1` | **单人版**（默认），ESP32-S3-N16R8 |
    | `esp32-s3-multiuser` | **多人顺序打卡版**（同一块 S3，只多 `-DWANAN_MULTIUSER=1`；`multi.set` 可随时关掉退回单人行为） |
-   | `esp32-wroom-32-a` / `-b` | 经典 ESP32-WROOM-32（4 MB / 无 PSRAM），两块分别绑不同 COM 口 |
+   | `esp32-wroom-32-COM6` / `-COM7` | 经典 ESP32-WROOM-32 单人版（4 MB / 无 PSRAM）；**按 COM 口各建一个 env**，两块板同时插着也不会刷错 |
+   | `esp32-wroom-32-multiuser-COM6` / `-COM7` | 经典 ESP32-WROOM-32 多人版（同上，多 `-DWANAN_MULTIUSER=1`） |
 
 4. **Build** → **Upload** → **Monitor**（115200）；多块板同时插着时**务必写死端口**或加 `--upload-port COMx`，避免刷错板；
 5. 串口默认自动探测；识别不到时在 `firmware/platformio.ini` 对应 env 里填 `upload_port` / `monitor_port`。
