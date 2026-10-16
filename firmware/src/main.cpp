@@ -21,6 +21,7 @@
 #include "http_client.h"
 #include "logger.h"
 #include "multi_checkin.h"
+#include "notify_service.h"
 #include "status_led.h"
 #include "task_scheduler.h"
 #include "time_service.h"
@@ -42,6 +43,7 @@ CheckinApi g_api;
 CheckinService g_checkin;
 AccountStore g_accounts;
 MultiCheckin g_multi;
+NotifyService g_notify;
 TaskScheduler g_scheduler;
 BleService g_ble;
 CommandRouter g_router;
@@ -77,9 +79,9 @@ void onScheduledTrigger(TaskScheduler::Trigger trigger) {
       g_router.enqueue(CommandRouter::WorkKind::DailyCheckin);
       break;
     case TaskScheduler::Trigger::DeadlineMissed:
-      // 窗口结束仍未成功：立刻告警（设备侧只能上报，补卡需人工）
-      g_router.emitEvent(
-          "alert", "\"kind\":\"deadline\",\"msg\":\"check-in window closed without success\"");
+      // 窗口结束仍未成功：告警 + 手机通知。
+      // 必须投递到 net_task —— 通知要走 HTTP，BLE 回调/定时器任务里不能做网络请求。
+      g_router.enqueue(CommandRouter::WorkKind::DeadlineMissed);
       break;
   }
 }
@@ -123,9 +125,24 @@ void setup() {
   g_api.begin(g_http);
   g_checkin.begin(g_config, g_auth, g_api, g_time);
 
-  // 5b) 多人顺序打卡（单人版里它只是"存在但关闭"）
+  // 5b) 账号表（打卡的唯一事实来源：单人 = 只有一条，表为空 = 用设备自身配置）
   g_accounts.begin();
   g_multi.begin(g_config, g_accounts, g_cookies, g_checkin, g_time);
+  g_notify.begin(g_config, g_http, g_time);
+  // 启动就把「列表第一个生效账号」套进内存配置：这样 status / probe / chain
+  // 看到的人，和调度器今晚要打的人，始终是同一个（不会出现"显示的是设备旧凭证"）。
+  {
+    const size_t count = g_accounts.count();
+    for (size_t index = 0; index < count; index++) {
+      CheckinProfile profile;
+      if (g_accounts.get(index, profile) && profile.enabled) {
+        g_config.applyProfile(profile);
+        LOG_I(kTag, "default account = %s (enabled %u/%u)", profile.label.c_str(),
+              static_cast<unsigned>(g_accounts.enabledCount()), static_cast<unsigned>(count));
+        break;
+      }
+    }
+  }
 
   // 6) 调度器
   g_scheduler.begin(g_config, g_time);
@@ -133,7 +150,7 @@ void setup() {
 
   // 7) 指令路由
   g_router.begin(g_config, g_cookies, g_wifi, g_time, g_auth, g_api, g_http, g_checkin, g_ble,
-                 g_scheduler, g_led, g_accounts, g_multi);
+                 g_scheduler, g_led, g_accounts, g_multi, g_notify);
   g_ble.setLineCallback([](const String& line) { g_router.onBleLine(line); });
   g_wifi.begin(g_config);
   g_wifi.setStateCallback(onWifiStateChanged);

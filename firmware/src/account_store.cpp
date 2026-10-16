@@ -57,6 +57,8 @@ Result AccountStore::begin(const char* nvsNamespace) {
     for (JsonObject item : doc.as<JsonArray>()) {
       CheckinProfile profile;
       profile.label = item["l"] | "";
+      // 缺 "en" 视为启用：兼容旧版本（无此字段）写下的账号表
+      profile.enabled = item["en"] | true;
       profile.studentId = item["u"] | "";
       profile.password = item["p"] | "";
       profile.fingerprint = item["f"] | "";
@@ -82,6 +84,7 @@ Result AccountStore::persist() {
   for (const CheckinProfile& profile : m_list) {
     JsonObject item = array.add<JsonObject>();
     item["l"] = profile.label;
+    item["en"] = profile.enabled;
     item["u"] = profile.studentId;
     item["p"] = profile.password;
     item["f"] = profile.fingerprint;
@@ -156,6 +159,29 @@ Result AccountStore::addOrUpdate(const CheckinProfile& profile) {
   return result;
 }
 
+Result AccountStore::setEnabled(const String& label, bool enabled) {
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const int index = indexOfLabel(label);
+  if (index < 0) {
+    if (m_mutex) xSemaphoreGive(m_mutex);
+    return Result::NotFound;
+  }
+  m_list[static_cast<size_t>(index)].enabled = enabled;
+  const Result result = persist();
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  LOG_I(kTag, "account %s -> %s, enabled=%u/%u", label.c_str(), enabled ? "ON" : "OFF",
+        static_cast<unsigned>(enabledCount()), static_cast<unsigned>(m_list.size()));
+  return result;
+}
+
+size_t AccountStore::enabledCount() const {
+  size_t n = 0;
+  for (const CheckinProfile& profile : m_list) {
+    if (profile.enabled) n++;
+  }
+  return n;
+}
+
 Result AccountStore::remove(const String& label) {
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   const int index = indexOfLabel(label);
@@ -212,6 +238,7 @@ String AccountStore::toJsonSummary() const {
   for (const CheckinProfile& profile : m_list) {
     JsonObject item = array.add<JsonObject>();
     item["label"] = profile.label;
+    item["enabled"] = profile.enabled;
     item["user"] = maskUser(profile.studentId);
     item["passwordSet"] = profile.password.length() > 0;
     item["fingerprintSet"] = profile.hasFingerprint();

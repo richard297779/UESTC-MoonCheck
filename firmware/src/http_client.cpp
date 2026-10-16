@@ -5,6 +5,7 @@
 #include "http_client.h"
 
 #include "logger.h"
+#include "public_ca_pem.h"   // 公网通知服务的信任集合（由 tools/gen_public_ca.js 生成）
 #include "uestc_ca_pem.h"
 
 namespace {
@@ -337,9 +338,13 @@ Result HttpClient::sendOnce(const HttpRequest& request, HttpResponse& response) 
                          : static_cast<Client*>(&m_plainClient);
 
   if (https) {
-    if (m_tlsMode == 0) {
+    if (m_tlsMode == 0 || request.insecure) {
       m_secureClient.setInsecure();
+    } else if (request.publicCa) {
+      // 第三方推送站点（Bark / ntfy / Server酱 / 钉钉 / 自建中转）：用公共根证书包。
+      m_secureClient.setCACert(kPublicCaPem);
     } else {
+      // 校园站点：仍然只用抓包得到的那条链校验，不因公网根证书而放宽。
       m_secureClient.setCACert(kUestcCaPem);
     }
     m_secureClient.setHandshakeTimeout(15);

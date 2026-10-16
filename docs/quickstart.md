@@ -299,14 +299,19 @@ status
 | `loc <lat> <lng> [addr]` | 配宿舍坐标 |
 | `sched <at> [end] [jitter]` | 配打卡时间 |
 | `auto on|off` | 开关每日自动打卡 |
+| `account add <标签> <学号> <密码> [指纹] [lat] [lng]` / `account list` / `account rm <标签>` / `account clear` | 多账号表（≤6） |
+| `account on <标签>` / `account off <标签>` | 单独启用/停用某个账号：关掉的账号当天**不登录、不提交、也不计入"全员成功"** |
+| `multi` / `multi probe` / `multi force` / `multi <秒>` | 按账号表跑一轮 / 只读体检 / 跳过"今天已打过" / 只设账号间隔 |
+| `notify set url=… style=0|1|2 [on|off]` / `notify status` / `notify test [文本]` | 手机推送配置、状态、试发 |
 | `login [force]` / `probe` / `chain [秒] [force]` / `checkin [force]` | 手动登录 / 只读体检 / 全链路自检 / 打卡 |
 | `session <值>` | 注入浏览器会话（应急） |
 | `name <标签>` | 给这块板起个好认的蓝牙名（如 `name A01` → `WANAN-A01`） |
 | `raw <json>` | 直接发原始指令 |
 | `quit` | 退出（配置不会丢） |
 
-> 🧑🤝🧑 **一台板子帮多个人打卡**？那是"多人顺序打卡版"固件（`env:esp32-s3-multiuser`），
-> 用 `account add` / `multi` 系列命令，详见仓库内 `docs/multi-user-design.md`。
+> 🧑🤝🧑 **一台板子帮多个人打卡**？**同一份固件**就能做：`account add` 加人、`account on|off <标签>`
+> 单独控制每个人是否打卡；账号表里没人（表为空）时，设备自动用自己的 `auth` + `loc` 配置打卡。
+> 详见仓库内 `docs/multi-user-design.md`。
 
 ---
 

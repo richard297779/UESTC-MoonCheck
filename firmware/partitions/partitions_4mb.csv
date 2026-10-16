@@ -1,10 +1,11 @@
 # Partition table for 4 MB flash (e.g. ESP32-WROOM-32)
 # NOTE: keep this file ASCII-only -- PlatformIO parses it with the system locale
 #       (GBK on Chinese Windows), so non-ASCII comments break the build.
-# Layout: app0 0x10000..0x19FFFF (1.5625 MB), app1 0x1A0000..0x32FFFF, ends 0x330000
-#         = 3.375 MB used of 4 MB, ~0.6 MB free tail. Current app size ~1.15 MB.
-# Name,     Type, SubType,  Offset,   Size,     Flags
-nvs,        data, nvs,      0x9000,   0x5000,
-otadata,    data, ota,      0xE000,   0x2000,
-app0,       app,  ota_0,    0x10000,  0x190000,
-app1,       app,  ota_1,    0x1A0000, 0x190000,
+# Layout (plan B, enlarged dual slot, OTA-capable):
+#   app0 0x10000..0x1FFFFF (2,031,616 B)   app1 0x200000..0x3EFFFF (2,031,616 B)
+#   table ends 0x3F0000, ~64 KB free tail. App size today ~1.34 MB = 68 % of a slot.
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xE000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x1F0000,
+app1,       app,  ota_1,    0x200000,  0x1F0000,

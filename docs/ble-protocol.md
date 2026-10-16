@@ -67,7 +67,7 @@
 | `loc.set` | `lng, lat[, addr, coord_sys]` | 写打卡坐标（D4 要求的可配置项） | `ok` |
 | `sched.set` | `at[, jitter_s, window_start, window_end]` | 修改打卡时间（默认 22:00 / 21:00–23:30） | `ok` |
 | `net.set` | `ntp[], tls_verify, ua` | 网络参数（含 UA，R3 需要固定） | `ok` |
-| `notify.set` | `webhook_url` | 可选 Webhook（见 §7） | `ok` |
+| `notify.set` | `url, style, on, gap_s, quota` | 手机通知（已实装，见 §4.4 与 §7） | `ok` |
 | `save` | — | 落盘（部分实现为即时落盘，可省略） | `ok` |
 | `factory.reset` | `confirm:"YES"` | 擦除配置与凭据（保留固件） | `ok` 后重启 |
 
@@ -111,13 +111,22 @@ code=123456                          // 纯文本形式（同样接受）
 | op | 参数 | 说明 | 耗时 |
 | --- | --- | --- | --- |
 | `hello` | — | 固件版本 / Flash / PSRAM / 能力位 | 否 |
-| `status` | — | 配置摘要（脱敏）+ 网络 + 会话 + 下次计划 + 上次结果 | 否 |
+| `status` | — | 配置摘要（脱敏，含**当前生效账号** `"account":"<标签>"`，账号表为空时是 `"device"`）+ 网络 + 会话 + 下次计划 + 上次结果 | 否 |
 | `wifi.set` | `ssid,pass` | 写 WiFi 并立即连接+校时 | 是 |
 | `wifi.scan` | — | 扫描周边 AP | 是 |
 | `auth.set` | `user,pass[,bfp]` | 写学号 / 密码 / 指纹（不回显） | 否 |
 | `loc.set` | `lat,lng[,addr]` | 写打卡坐标 | 否 |
 | `sched.set` | `at,window_end[,jitter_s,window_start]` | 写打卡时间与窗口（默认 22:00 / 21:00–23:30） | 否 |
 | `auto.set` | `enabled` | 开关每日自动打卡 | 否 |
+| `notify.set` | `url,style,on,gap,quota` | 配置手机通知通道（`style` 0=GET 模板 1=POST 文本 2=POST JSON）；`url` 含 token，回执只输出脱敏形式。详见 `docs/notify-design.md` | 否 |
+| `notify.status` | — | 通知开关 / 格式 / 脱敏 URL / 今日已发 / 队列长度 / 重试轮次 | 否 |
+| `test.notify` | `body?` | **立即真发一条**（不入队、不受去重与配额限制），用来验证通道 | 是 |
+| `account.add` | `label,user,pass,bfp[,lat,lng,addr][,enabled]` | 账号表新增/覆盖成员账号（≤6）；标签已存在且不带 `enabled` → 沿用原开关（改密码不会把关掉的账号偷偷打开） | 否 |
+| `account.list` | — | 列出成员账号（不含口令与指纹；每条带 `"enabled": true\|false`） | 否 |
+| `account.enable` | `label,on` | 单独开关某账号：`on=false` 不登录、不提交、不进汇总分母（控制台写法 `account on <标签>` / `account off <标签>`） | 否 |
+| `account.remove` / `account.clear` | `label` / — | 删除单个 / 清空全部（清空后自动退回设备自身 `auth` + `loc` 配置） | 否 |
+| `multi.set` | `gap_s` | 账号之间间隔秒（默认 20，≤600）。"单人/多人"开关已取消，打几个人由账号表决定；回执 `{"gapSeconds":N,"accounts":M,"enabled":K}` | 否 |
+| `test.multi` | `probe?,force?` | 按账号表顺序跑一轮（`probe` 只做登录体检）；通知**只发一条汇总** | 是 |
 | `name.set` | `name` | 自定义 BLE 广播名标签 `WANAN-<标签>`（`A-Z a-z 0-9 - _`，≤12；空串=恢复蓝牙 MAC 尾号）。**即时刷新 GATT 名与广播**（无需重启），并持久化到 NVS | 否 |
 | `time.sync` | — | 立即重新校时 | 是 |
 | `logs` | `n` | 拉取最近 n 行环形日志 | 否 |
@@ -126,7 +135,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `factory.reset` | `confirm:"YES"` | 擦除配置与凭据后重启 | 否 |
 | `reboot` | — | 重启 | 否 |
 | `test.http` | `url` | 访问任意 URL：状态码 / 字节数 / 耗时 / 是否命中关键字 | 是 |
-| `test.login` | `force?` | 登录链路测试；**默认窗口外不登录**（平台不授权窗口外会话），`force=true` 才强制 | 是 |
+| `test.login` | `force?` | 登录链路测试；**默认只在窗口内登录**（会话 TTL≈1 h 且打卡只接受窗口内，窗口外登录会白烧一次登录次数），`force=true` 才强制。授权本身与窗口无关，靠门户预热 `GET /api/isLoginFailure`（`docs/api-contract.md` §8.7） | 是 |
 | `test.chain` | `wait_s?,force?` | **全链路自检**：网络/校时 → 登录页 → 登录 → **进入微应用** → 业务接口；`wait_s` 秒内每 30 s 重探放行（≤900） | 是 |
 | `test.probe` | — | 前置体检（会话 / 今日状态 / 平台时段 / 打卡点），只读 | 是 |
 | `test.checkin` | `force?` | 打卡测试；`force` 仅跳过"今日已打卡"检查，**仍需在窗口内** | 是 |
@@ -146,6 +155,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `evt.need_code` | `type:"sms|wecom", phone:"130****2077", ttl:600, try:1` | **需要二次验证码** | **在 10 分钟内回传 `code=xxxxxx`** |
 | `evt.progress` | `stage, detail` | 登录/打卡进度（`net→login→mfa→checkin→verify`） | — |
 | `evt.result` | `ok, date, ts, msg` | 打卡最终结果 | 失败时人工补卡 |
+| `evt.notify` | `kind, event, title, body` | 通知**入队时**镜像一份到 BLE（真正送达走 HTTPS，见 `docs/notify-design.md`） | 控制台在线就能看到；不在线也不影响推送 |
 | `evt.status` | 见下 | 响应 `status` 指令 | — |
 | `evt.alert` | `kind, msg` | 需人工介入（信任将过期 / 连续失败 / 风控 / 接口变更） | 按 `kind` 处理 |
 | `evt.log` | `ts, level, msg` | 订阅日志（`logs --follow`） | — |
@@ -157,8 +167,11 @@ code=123456                          // 纯文本形式（同样接受）
 {
   "evt":"status",
   "fw":"0.3.1",
-  "cfg": {"wifi":"UESTC-WIFI","user":"2023******","loc":[104.xxxxxx,30.xxxxxx],
-          "sched":"22:00 / 21:00-23:30","webhook":true},
+  "cfg": {"device":"WANAN-1A2B","account":"A01","label":"A01","wifiSsid":"UESTC-WIFI","wifiConfigured":true,
+          "user":"2023******","passwordSet":true,"fingerprintSet":true,
+          "location":{"lat":30.400000,"lng":104.000000,"address":"…"},
+          "schedule":{"checkinAt":"22:00","windowEnd":"23:30","jitterSeconds":30,"autoDaily":true},
+          "accountGap":20,"notifyOn":true,"notifyStyle":"post_json","notifyUrl":"https://***（len=42）"},
   "net": {"state":"connected","ip":"10.21.x.x","portal":"ok","rssi":-62},
   "auth":{"trust":"valid","expire_at":"2026-11-10","mfa_pending":false},
   "last": {"date":"2026-10-11","result":"ok","ts":"22:00:07","msg":"已打卡"},
@@ -197,32 +210,38 @@ code=123456                          // 纯文本形式（同样接受）
 
 ---
 
-## 7. 可选通知通道：Webhook（纯软件，零硬件成本）
+## 7. 通知通道：NotifyService（已实装）
 
-**动机**：设备在宿舍、你人在外面，BLE 够不着；LED 也看不到。而设备本来就在校园网上——发一个 HTTPS 请求通知你，比加任何硬件都便宜。
+**动机**：设备在宿舍、你人在外面，BLE 够不着；LED 也看不到。而设备本来就在校园网上——发一个 HTTPS 请求推送到手机，比加任何硬件都便宜。
 
-| 方案 | 成本 | 说明 |
+> 完整设计（选型、限流、队列、证书分流）见 [`notify-design.md`](notify-design.md)；本节只列协议面。
+
+| 指令 | 参数 | 说明 |
 | --- | --- | --- |
-| 企业微信群机器人 | 免费 | 需要一个群 + 机器人 Webhook URL |
-| PushPlus / Server 酱 | 免费额度 | 微信推送，注册即得 URL |
-| 自建（如有服务器） | — | 任意 HTTP 端点 |
+| `notify.set` | `url`,`style`,`on`,`gap_s`,`quota` | 全部可选，只改给出的项；`style` = `0` GET 模板 / `1` POST 纯文本 / `2` POST JSON（默认 2）；`gap_s` 重试通知最小间隔秒（默认 60）；`quota` 每日条数上限（默认 40，`0`＝不限） |
+| `notify.status` | — | 回 `{"on":..,"style":..,"url":"<脱敏>","gap":..,"quota":..,"sentToday":..,"queued":..,"retryCount":..}` |
+| `test.notify` | `body` | 立刻真发一条 `Info` 事件（绕过队列、去重与配额），回执带 HTTP 状态与响应摘要 |
 
-**推送时机（建议默认开启，可关闭）**：
+**实际推送时机**（BLE 事件 `evt.notify` 是同一批内容的本地镜像）：
 
-| 时机 | 内容 |
-| --- | --- |
-| 打卡成功 | `✅ 10-11 22:00 已打卡` |
-| 打卡失败（22:00 首败） | `❌ 首次打卡失败：<原因>，将在窗口内重试` |
-| 需要验证码时无人应答 | `⚠️ 需要短信验证码，请连接设备回传` |
-| 信任即将过期（提前 3 天） | `⏳ 信任有效期至 11-10，请安排重新验证` |
-| 连续 3 次失败 / 检出风控 | `🚨 需人工介入：<原因>` |
+| 事件 | 时机 | 频次上限 |
+| --- | --- | --- |
+| `StatusDigest` | 每天窗口起点 21:00 的账号表体检之后（0 个人生效也发，摘要里写清楚） | 1 条/天 |
+| `CheckinOk` | 定时全部生效账号成功（**一条汇总**）；手动补打成功/今日已打过 | 1 条/天 |
+| `CheckinFail` | 本轮未全成功（正文含逐人结果与「将在 3 分钟后重试」） | 每 3 轮 1 条 |
+| `DeadlineMissed` | 23:30 窗口关闭仍未成功 | 1 条/天 |
+| `NeedMfa` | 登录要求二次验证（窗口内无法处理） | 1 条/天 |
+| `NetDown` | Wi-Fi 连接失败 | 1 条/小时 |
 
-**隐私约束**：Webhook 载荷**只包含时间戳、成功/失败、错误类别**；不含学号、密码、Cookie、坐标。
+**隐私约束**：载荷只含设备广播名、时间、状态码与结果文本；**不含**学号、口令、Cookie、指纹、坐标。通知 URL 在 `status` / `notify.status` 里只回显 scheme+host+长度。
+
+**硬约束**：通知的失败**永不**改变打卡结论（`last` 结果、LED、幂等判据都不看通知返回值）。
 
 ```jsonc
-{"op":"notify.set","url":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=***"}
+{"op":"notify.set","id":9,"url":"https://api.day.app/<你的KEY>/{title}/{body}","style":0,"on":1}
+{"op":"notify.status","id":10}
+{"op":"test.notify","id":11,"body":"manual test"}
 ```
-
 ---
 
 ## 8. OTA

@@ -33,14 +33,16 @@
     loc <lat> <lng> [addr]     配置打卡坐标
     sched <at> [end] [jitter]  配置打卡时间，如 sched 22:00 23:30 30
     auto <on|off>              开关每日自动打卡
-    account list               列出多人账号（学号打码，不含密码/指纹）
+    account list               列出账号表（学号打码，不含密码/指纹；单人 = 只有一条）
     account add <标签> <学号> <密码> [指纹|-] [lat lng [地址…]]
                                新增或覆盖一个账号（最多 6 个；省略坐标则沿用设备当前坐标，
                                指纹填 - 表示不设置）
-    account rm <标签>          删除一个账号；account clear 清空全部
-    multi on|off [gap_s]       开关"多人顺序打卡"（gap_s = 账号之间间隔秒，默认 20）
-    multi [probe] [force]      立即按顺序跑一轮。probe=只体检不提交（**仍会登录**，完整演练）；
+    account on|off <标签>      单独开关这个账号是否打卡（off = 不登录不提交，也不计入
+                               "全员成功"的分母）；account rm <标签> 删除，account clear 清空
+                               表为空时设备自动用 auth + loc 配的那一个账号打卡
+    multi [probe] [force]      立即按账号表顺序跑一轮。probe=只体检不提交（**仍会登录**，完整演练）；
                                force=跳过"已打卡"检查；窗口外演练需 `multi probe force` 才允许登录
+    multi <gap秒>              设置账号之间的间隔（默认 20 秒，最长 600）
     name [标签]                查看/设置 BLE 广播名（如 name A01 → WANAN-A01；
                                不带参数则显示当前名字；标签只允许 A-Za-z0-9-_ ≤12 字符）
     http <url>                 访问任意 URL（链路自测）
@@ -50,6 +52,11 @@
     probe                      前置体检（只读，随时可用）
     checkin [force]            打卡（force=跳过"今日已打卡"检查）
     clear                      清空 Cookie（模拟会话失效）
+    notify                     查看通知通道配置 + 今日已发条数 + 待重试条数
+    notify set url=<推送地址> [style=0|1|2] [on=1] [gap=秒] [quota=条]
+                               style 0=Bark 式 GET 模板 1=ntfy 式 POST 纯文本 2=POST JSON（默认）
+                               gap=同类事件去重间隔（默认 60）quota=每日上限（默认 40，0=不限）
+    notify test [文本]          立刻发一条真实通知（不进队列、不去重），用来验证通道
     session <value>            注入外部 SESSION（调试用，例如浏览器窗口内建立的会话）
     reset                      恢复出厂（会二次确认）
     raw <json>                 直接发送原始 JSON
@@ -190,7 +197,37 @@ class Console:
             await self.send(payload)
             return True
 
-        if command == "session":
+        if command == "notify":
+            # notify            -> 查看通知配置与今日发送计数
+            # notify set ...    -> 配置通道
+            # notify test [文本] -> 立刻发一条真实通知（不进队列、不受去重限制）
+            if not args:
+                await self.send({"op": "notify.status"})
+            elif args[0] == "test":
+                payload = {"op": "test.notify"}
+                if len(args) > 1:
+                    payload["body"] = " ".join(args[1:])
+                await self.send(payload)
+            elif args[0] == "set":
+                payload = {"op": "notify.set"}
+                for token in args[1:]:
+                    if "=" not in token:
+                        print(f"  忽略无法识别的参数：{token}（应为 key=value）")
+                        continue
+                    key, value = token.split("=", 1)
+                    if key == "on":
+                        payload["on"] = value in ("1", "true", "yes", "on")
+                    elif key in ("style", "gap", "quota"):
+                        try:
+                            payload[key] = int(value)
+                        except ValueError:
+                            print(f"  {key}= 需要整数，已忽略：{value}")
+                    else:
+                        payload[key] = value
+                await self.send(payload)
+            else:
+                print("  用法：notify | notify set url=… [style=0|1|2] [on=1] [gap=秒] [quota=条] | notify test [文本]")
+        elif command == "session":
             if not args:
                 print("  用法：session <SESSION值>（把外部会话注入设备，用于只读验证）")
             else:
@@ -270,23 +307,28 @@ class Console:
                         if len(args) >= 8:
                             payload["addr"] = " ".join(args[7:])
                     await self.send(payload)
+            elif sub in ("on", "enable", "off", "disable"):
+                if len(args) < 2:
+                    print("  用法：account on <标签>   /   account off <标签>")
+                else:
+                    await self.send({"op": "account.enable", "label": args[1],
+                                     "on": sub in ("on", "enable")})
             else:
-                print("  用法：account list | add | rm | clear")
+                print("  用法：account list | add | rm | on | off | clear")
         elif command == "multi":
-            if args and args[0] in ("on", "off"):
-                payload = {"op": "multi.set", "enabled": args[0] == "on"}
-                if len(args) >= 2:
-                    payload["gap_s"] = int(args[1])
-                await self.send(payload)
-            else:
-                # 可组合：multi / multi force / multi probe / multi probe force
-                payload = {"op": "test.multi"}
-                words = {word.lower() for word in args}
-                if "force" in words:
-                    payload["force"] = True
-                if "probe" in words:
-                    payload["probe"] = True
-                await self.send(payload)
+            # multi → 按账号表跑一轮打卡；multi probe → 只体检不提交
+            # multi <秒> → 设置账号之间的间隔；可组合 force（跳过"今日已打过"）
+            payload = {"op": "test.multi"}
+            words = [word.lower() for word in args]
+            if "force" in words:
+                payload["force"] = True
+            if "probe" in words:
+                payload["probe"] = True
+            for word in words:
+                if word.isdigit():
+                    payload = {"op": "multi.set", "gap_s": int(word)}
+                    break
+            await self.send(payload)
         elif command == "http":
             if not args:
                 print("  用法：http <url>")

@@ -1,12 +1,13 @@
 #pragma once
 
 // ============================================================================
-//  MultiCheckin：多人顺序打卡编排器
-//    对每个账号依次执行：清 Cookie → 清登录冷却 → 套用该账号 → 复用既有
+//  MultiCheckin：账号表顺序执行器（单人 = 表里只有一条）
+//    对每个**生效**的账号依次执行：清 Cookie → 清登录冷却 → 套用该账号 → 复用既有
 //    CheckinService（登录 → 门户预热 → 体检 → 幂等检查 → 提交 → 复查）
 //    账号之间按 multiGapSeconds 错峰，单个账号失败不影响其余账号。
+//    表为空的账号自动跳过（result=disabled），既不登录也不计入成功判定。
 //  设计要点：**不复制业务逻辑**，只是把既有的单账号链路按账号跑 N 遍，
-//            所以单人版与多人版共享全部 bug 修复。
+//            所以一条账号与六条账号共享全部 bug 修复。
 //  线程约束：runAll() 只能在 net_task 中调用（一次运行可达数十秒）。
 // ============================================================================
 
@@ -32,12 +33,21 @@ class MultiCheckin {
 
   void setEventSink(EventSink sink) { m_sink = sink; }
 
-  /// @brief 依次处理全部账号。
+  /// @brief 一轮执行的统计（**分母只算生效账号**，禁用账号绝不能计入，
+  ///        否则"全员成功"永远达不到 allOk → 调度器整夜重试）。
+  struct RunResult {
+    size_t total = 0;          ///< 账号表条数（含禁用）
+    size_t enabledTotal = 0;   ///< 本轮实际参与打卡的账号数
+    size_t okCount = 0;        ///< 成功 + 今日已打过（含禁用项吗？不含）
+    size_t disabledCount = 0;  ///< 被单独关掉、本轮跳过的数量
+    String summary;            ///< 结果数组 JSON：[{"label","enabled","result","ok","msg"}, …]
+  };
+
+  /// @brief 依次处理全部**生效**账号。
   /// @param force 传给 perform()：跳过"该账号今日已打卡"检查（仍必须在打卡窗口内）。
   /// @param probeOnly true=只体检不提交（用于演练）。
-  /// @param[out] summaryJson 结果数组 JSON：[{"label","result","ok","msg"}, …]。
-  /// @return 成功（含"今天已打过"）的账号数；无账号或重入时返回 0。
-  size_t runAll(bool force, bool probeOnly, String& summaryJson);
+  /// @return 统计结果；重入时全 0（summary="[]"）。
+  RunResult runAll(bool force, bool probeOnly);
 
   bool isRunning() const { return m_running; }
 

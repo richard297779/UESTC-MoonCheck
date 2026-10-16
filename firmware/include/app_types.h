@@ -187,9 +187,10 @@ inline constexpr const char* kNtpServer1 = "ntp.aliyun.com";
 inline constexpr const char* kNtpServer2 = "cn.pool.ntp.org";
 inline constexpr int32_t kTimezoneOffsetSeconds = 8 * 3600;
 
-/// @brief 登录冷却：登录成功后若微应用仍未放行，此期间内不再重复登录。
-/// @note 实测（2026-10-12 22:00）登录成功后平台需要一段时间才放行微应用，
-///       立刻重试登录既无意义又白白消耗登录次数。
+/// @brief 登录冷却：一次登录尝试之后，此期间内不再重复登录。
+/// @note 目的是避免连续提交登录消耗次数、触发风控，以及把 CookieJar 反复清干净。
+///       （原本这条是为了容忍"登录后约 10 分钟才放行"，该推测已被门户预热实验推翻，
+///        见 docs/api-contract.md §8.7；30 min 作为保守值保留。）
 inline constexpr uint32_t kLoginCooldownMs = 30UL * 60UL * 1000UL;
 
 /// @brief 打卡重试间隔：窗口内每次尝试失败后的重试周期。

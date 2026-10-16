@@ -19,6 +19,14 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEST = os.path.join(ROOT, 'mooncheck')
 
+# Windows 控制台默认 GBK，输出 ⚠ 这类字符会 UnicodeEncodeError 直接崩掉脚本
+# （已经踩过：文件复制完成后才崩，看起来像同步失败）。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, ValueError):
+    pass
+
 # 要同步的目录（相对主工程根）
 SYNC_DIRS = ['firmware', 'tools', 'docs']
 

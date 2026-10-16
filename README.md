@@ -18,7 +18,7 @@
 
 ## ⚠️ 免责声明（请先读）
 
-- 本项目用于**设备持有者本人账号**的自动打卡。仓库另提供一个**多人顺序打卡版**（一台设备为同一宿舍内**互相知情的几个账号**依次登录+打卡）——使用它必须获得每一位账号持有者的明确授权，**不做代打服务、不对外分发、不用于营利**；
+- 本项目用于**设备持有者本人账号**的自动打卡。固件也支持一台设备为同一宿舍内**互相知情的几个账号**依次打卡（账号表 + 每人独立开关）——使用它必须获得每一位账号持有者的明确授权，**不做代打服务、不对外分发、不用于营利**；
 - 自动化打卡**可能不符合学校规定**，请自行评估并承担后果；
 - 请勿用于绕过任何服务端安全校验、请勿高频请求（本项目默认每天只登录一次、只打卡一次）；
 - 设备内会保存学号与密码（NVS 明文，可选开启 Flash 加密），**请勿转让/借出设备**，丢失后立即改密；
@@ -38,7 +38,7 @@
 | 🔌 掉电自恢复 | 配置、会话、上次结果全部持久化；重启后自动重连 WiFi、校时、续跑调度 |
 | 🩺 自带诊断 | `chain`（全链路逐段判定）、`netcheck`（是否需要网页认证）、`scan`（看有没有 2.4 GHz）、`logs`（设备日志回读），排障不靠猜 |
 | 🏷 可自定义设备名 | `name A01` → 广播名变 `WANAN-A01`（多块板时按名字认领，存 NVS、在线生效） |
-| 🧩 多人顺序打卡版 | 一台设备最多 6 个账号，依次"登录 → 门户预热 → 打卡 → 复查"，每人独立幂等、失败互不影响（见 `docs/multi-user-design.md`） |
+| 🧩 一台设备多个账号 | 账号表最多 6 条，依次"登录 → 门户预热 → 打卡 → 复查"，每人独立幂等、失败互不影响；**每人可单独开关是否打卡**（`account on/off`），关掉的账号不登录、不提交、也不算进"全员成功"的分母。表里只有 1 条 = 单人；表为空 = 直接用设备自己的 `auth` + `loc`。**单/多人不再是两种固件**（见 `docs/multi-user-design.md`） |
 | 🖥 多构建目标 | 同一份代码支持 **ESP32-S3**（16 MB / 无 PSRAM 均可）与**经典 ESP32-WROOM-32**，LED 与 PSRAM 自动适配 |
 
 ---
@@ -101,7 +101,7 @@ cd tools\pc_reference
 copy config.example.json config.json     # 填学号/密码/指纹/坐标
 python verify.py selftest
 python verify.py status                  # 只读：能读到今日状态就说明链路通
-# 3) 烧固件：VSCode 打开 firmware\ → 选环境（S3 单人 / S3 多人 / 经典 ESP32）→ Build → Upload
+# 3) 烧固件：VSCode 打开 firmware\ → 选环境（S3 / 经典 ESP32）→ Build → Upload
 # 4) 蓝牙配网（二选一）
 python ..\tools\ble_console.py --list     # 看板子在不在（广播名 WANAN-XXXX）
 python ..\tools\ble_console.py --name WANAN-1A2B
@@ -170,6 +170,11 @@ python ble_console.py            # 自动扫描 WANAN-* 并连接
 
 ## 5. 复刻详细步骤
 
+> **不想装 PlatformIO？** 也可以直接用预编译产物：下载 Release 里对应板型的 `*-merged.bin`，
+> 在乐鑫官方网页烧录工具（esptool-js）里填地址 `0x0` 刷入，然后照下面 Step 4 用蓝牙配置一次。
+> 完整操作、以及**合并包会清空已保存配置**的原因，见 [`docs/release-guide.md`](docs/release-guide.md)。
+> 升级固件时只刷 `-full.zip` 里的 `firmware.bin`（地址 `0x10000`），配置全部保留。
+
 ### Step 0 · 先搞清你要收集哪些信息
 
 复刻的本质是**把浏览器里手动做的五步（登录 → 换会话 → 门户预热 → 进微应用 → 打卡），翻译成设备上的 HTTP 请求**。其中"门户预热"是最容易漏、也最致命的一步。需要从中提取：
@@ -232,10 +237,13 @@ python verify.py status      # 只读：读今日打卡状态（零风险）
 
    | env | 用途 |
    | --- | --- |
-   | `esp32-s3-devkitc-1` | **单人版**（默认），ESP32-S3-N16R8 |
-   | `esp32-s3-multiuser` | **多人顺序打卡版**（同一块 S3，只多 `-DWANAN_MULTIUSER=1`；`multi.set` 可随时关掉退回单人行为） |
-   | `esp32-wroom-32-COM6` / `-COM7` | 经典 ESP32-WROOM-32 单人版（4 MB / 无 PSRAM）；**按 COM 口各建一个 env**，两块板同时插着也不会刷错 |
-   | `esp32-wroom-32-multiuser-COM6` / `-COM7` | 经典 ESP32-WROOM-32 多人版（同上，多 `-DWANAN_MULTIUSER=1`） |
+   | `esp32-s3-devkitc-1` | ESP32-S3-N16R8（16 MB / 8 MB OPI PSRAM），**默认** |
+   | `esp32-wroom-32-COM6` / `-COM7` | 经典 ESP32-WROOM-32（4 MB / 无 PSRAM）；**按 COM 口各建一个 env**，两块板同时插着也不会刷错 |
+
+   > 目标只按**板子**分，不再按"单人 / 多人"分：打几个人完全由**账号表**决定
+   > （`account add` 加人、`account on/off` 逐个开关，表为空就用设备自己的 `auth` + `loc`）。
+   > 4 MB 板使用 `partitions/partitions_4mb.csv`（双 app 槽各 0x1F0000，保留 OTA）；
+   > **换分区表后必须整片重刷**，配置区（nvs）偏移不变所以配置不会丢。
 
 4. **Build** → **Upload** → **Monitor**（115200）；多块板同时插着时**务必写死端口**或加 `--upload-port COMx`，避免刷错板；
 5. 串口默认自动探测；识别不到时在 `firmware/platformio.ini` 对应 env 里填 `upload_port` / `monitor_port`。
@@ -305,7 +313,51 @@ python ble_console.py --name WANAN-1A2B # 多块板时按名字连，避免连�
 | `netcheck` | 当前网络是否需要网页认证（204=不需要） | 随时 |
 | `logs 30` | 回读设备日志（排障主力） | 随时 |
 | `checkin` | 真正打卡 | **仅 21:00–23:30** |
-| `account …` / `multi …` | **仅多人版**：管理账号表、按顺序跑一轮 | 随时（提交需窗口内） |
+| `notify set url=… [style=0|1|2] [on=0|1] [gap=秒] [quota=条]` | 配置手机通知通道（URL 里带 token，回执只显示脱敏形式） | 随时 |
+| `notify` | 查看通道配置 + 今日已发条数 + 待重试条数 | 随时 |
+| `notify test [文本]` | **立刻真发一条**（不入队、不受去重与配额限制）：验证手机能否收到 | 随时 |
+| `account list / add / rm / on / off / clear`、`multi [probe] [force]`、`multi <秒>` | 管理账号表（单人 = 一条，空表 = 用设备自身配置）；`on/off` **单独开关某个人是否打卡**；`multi` 立即按表跑一轮；`multi <秒>` 设账号间隔 | 随时（提交需窗口内） |
+
+### 5.1 把通知发到手机
+
+设备只做一件事：把标题+正文按你选的格式 POST/GET 到一条 URL。任选一种通道：
+
+```text
+# A. Bark（iPhone 最省事）——把 <你的BarkKEY> 换成 App 里给的那串
+notify set url=https://api.day.app/<你的BarkKEY>/{title}/{body} style=0 on=1
+
+# B. ntfy（Android / iOS / 网页）——自己起一个没人用的主题名
+notify set url=https://ntfy.sh/<你的主题名> style=1 on=1
+
+# C. 不把 token 交给设备：PC 上跑中转，设备只发内网地址
+python tools/notify_sink.py --port 8770 --forward https://api.day.app/<你的BarkKEY>/{title}/{body}
+notify set url=http://<PC局域网IP>:8770/notify style=2 on=1
+
+# D. Server酱（微信最省事，不用装 App）—— sct.ftqq.com 登录后拿 SendKey
+notify set url=https://sctapi.ftqq.com/<你的SENDKEY>.send style=2 on=1
+
+notify test 你好            # 立刻验证：手机该收到一条
+```
+
+> ⚠️ **Server酱 的正文字段叫 `desp`，不认 `body`**。早先版本按通用格式发 `body`，结果是
+> "HTTP 200、发送成功，但手机上只有标题没有内容"。现在固件认出 `ftqq.com`/`.send` 并自动改用
+> `desp`（`style=1` 的纯文本也会自动降级成表单），`notify status` 里的 `contentField` 会告诉
+> 你现在用的是哪个键名。另外这类服务的**拒收也返回 HTTP 200**（SendKey 错、当天条数用尽），
+> 固件现在会解析 `code`/`errcode` 把它当失败处理并进队重试。
+
+一夜最多 4~5 条（同事件按 key 去重，重试每 3 轮只报 1 条）：
+
+| 事件 | 触发时机 | 内容 |
+| --- | --- | --- |
+| 21:00 状态摘要 | 窗口起点预登录后，每天一条 | 会话是否有效、打卡界面是否可达、今日状态、时段、到点是否会重新登录 |
+| 打卡成功 | 单人成功/已打卡；多人**只发一条汇总** | `本轮 3/3 成功` / `未成功：xxx(pending)` |
+| 重试进度 | 未全成功时**每 3 轮报 1 条**（约 9 分钟一条） | 与「打卡失败」同一条消息，正文末尾附 `将在 3 分钟后重试` |
+| 打卡失败 | 本轮终态失败 | 失败原因 |
+| 窗口已过仍未成功 | 23:30 仍未确认 | 已重试轮次 |
+| 需要验证码 | 二次验证拦住登录 | 提示取指纹/回传验证码 |
+| 网络不可用 | Wi-Fi 连接失败，每小时最多一条 | 设备离线，恢复后自动补发 |
+
+> 通知**永远不影响打卡结论**：推送失败只是没通知，`status` / `today` 查询才是事实来源。详见 `docs/notify-design.md`。
 
 `probe` 的期望输出：
 
@@ -383,6 +435,8 @@ python ble_console.py --name WANAN-1A2B # 多块板时按名字连，避免连�
 | `test.http` 返回 `NETWORK_ERROR` | WiFi / DNS / TLS | 确认 2.4 GHz、能 ping 通外网；若证书链变了，用 `tools/gen_ca_pem.js` 重新生成 `firmware/include/uestc_ca_pem.h` |
 | `psramKB: 0` | 板级配置没启用 PSRAM | 确认 `platformio.ini` 的 `board_build.arduino.memory_type = qio_opi` 与 `-DBOARD_HAS_PSRAM`；**不影响功能**（空闲堆 ~200 KB 足够） |
 | BLE 连上但服务发现超时 | Windows 侧 GATT 缓存/旧连接残留 | 先烧新固件并断电重启；手机关掉 nRF Connect；Windows 删除设备后重开蓝牙 |
+| **通知收到了，但只有标题、正文是空的** | 通道字段名不对：Server酱 的正文叫 **`desp`**，发 `body` 它照样回 `code:0` | 用 **0.3.1** 及以后的固件（认出 `ftqq.com`/`.send` 后自动换键名）；`notify status` 看 `contentField` 是否为 `desp`；旧固件可临时写模板 `…send?title={title}&desp={body} style=0` |
+| `notify test` 说发送成功，手机却没消息 | 对端把失败藏在 **HTTP 200** 里（SendKey 错、当天条数用尽、频率超限） | 0.3.1 起会解析 `code`/`errcode` 并回 `code 40001 …`；`quota` 也别设太小（Server酱 免费版每天 5 条，建议 `quota=15`） |
 | `E NimBLEAttValue: val > max` | 长回执分片尺寸超限 | 已在 v0.1 修复（base64 分片 + MTU 变化监听）；旧固件请升级 |
 
 ---
@@ -413,15 +467,16 @@ mooncheck/
 │  ├─ python-verification-plan.md PC 端验证方案 V0–V5
 │  ├─ python-test-design.md       Python 参考实现的模块与接口设计
 │  ├─ api-contract.md             接口契约（唯一真相来源；§8.6 排除清单、**§8.7 根因**）
-│  ├─ firmware-design.md          固件设计：16 个模块的功能与接口
-│  ├─ multi-user-design.md        多人顺序打卡版设计（账号表、编排、风险）
+│  ├─ firmware-design.md          固件设计：17 个模块的功能与接口
+│  ├─ multi-user-design.md        多账号顺序打卡设计（账号表、每人开关、编排、风险）
 │  ├─ ble-protocol.md             蓝牙指令/事件协议（含"已实装指令对照表"）
 │  ├─ network-uestc-wifi.md       校园网接入判定（802.1X / Portal / 2.4 GHz）
+│  ├─ notify-design.md            手机通知：通道格式、事件表、限流去重、失败隔离、证书分流
+│  ├─ release-guide.md            ★ 发行与免编译刷写（Release 资产 + 网页烧录工具）
 │  ├─ test-plan-checkin-path.md   排查方法记录：分层验证 + 二分定位根因
 │  └─ assets/quickstart/          上手指南配图存放处（含打码提醒）
 ├─ firmware/                      固件（PlatformIO + Arduino-ESP32 3.x）
-│  ├─ platformio.ini              多构建目标：S3 单人 / S3 多人 / 经典 ESP32
-│  ├─ platformio.wroom32.ini.example  经典 ESP32 环境模板（避免插件解析依赖时卡住）
+│  ├─ platformio.ini              多构建目标：只按板子分（S3 / 经典 ESP32）
 │  ├─ partitions/                 partitions_16mb.csv / partitions_4mb.csv（纯 ASCII）
 │  ├─ include/                    app_types.h + 16 个模块头 + 内置 CA 证书链
 │  ├─ src/                        与头文件一一对应的 .cpp + main.cpp
@@ -452,6 +507,9 @@ mooncheck/
    ├─ show_capture_item.py        脱敏查看单条抓包条目
    ├─ probe_cas_crypto.js         从密文反推密码加密算法（逆向必备）
    ├─ gen_ca_pem.js               抓真实证书链 → 生成固件 CA 头文件
+   ├─ gen_public_ca.js        抓公网推送域名证书链 → `public_ca_pem.h`（含 AIA 中间证书，钉钉必需）
+   ├─ verify_public_ca.js     用生成的 PEM 逐域名复验 TLS 握手（换/加推送域名时必跑）
+   ├─ notify_sink.py          局域网通知中转（设备不存公网 token，PC 收到再转 Bark/ntfy/桌面）
    ├─ check_tls.js                检查证书链与 TLS 版本
    ├─ fetch_asset.js              抓取公开静态资源
    └─ sync_to_mooncheck.py        维护者用：同步到公开副本（自动跳过脱敏文件）
@@ -465,17 +523,19 @@ mooncheck/
 | --- | --- | --- |
 | M0 接口契约 | 抓包还原 10 个端点、密码算法（源码+密文双确认）、载荷模板、围栏半径、打卡窗口 | ✅ `docs/api-contract.md` v1.4 |
 | M1 PC 参考实现 | Python 独立跑通"登录 → 换会话 → 进微应用 → 打卡"，证明无签名/无风控 | ✅ `tools/pc_reference/` |
-| M2 固件链路 | 16 个模块、BLE 配网、NVS 持久化、TLS 校验、幂等与重试、结果自证 | ✅ 已上板验证 |
+| M2 固件链路 | 17 个模块、BLE 配网、NVS 持久化、TLS 校验、幂等与重试、结果自证 | ✅ 0.3.1（0.3.0 已上板实测） |
 | **M3 端到端自动打卡** | 设备**自行登录 + 门户预热 + 提交 + 复查**全链路成功（`CHECKED_IN`，`distance` 在 130 m 内，`abnormalFlag=false`） | ✅ 2026-10-13 实测 |
 | M4 根因定位 | 用"分层回放 + 二分"锁定微应用授权的唯一前提 = 门户预热 `GET /api/isLoginFailure`，并推翻此前两条误判 | ✅ §8.7 |
-| M5 多板与运维 | `name.set` 自定义设备名、`board_id.py` 串口↔板子对照、多构建目标（S3 / 经典 ESP32 / 多人版）、`scan`/`netcheck` 自检 | ✅ 代码完成 |
-| M6 多人顺序打卡 | 一台设备最多 6 个账号依次登录+打卡，每人独立幂等与结果记录 | ✅ 代码完成，⏳ 待多账号实测 |
+| M5 多板与运维 | `name.set` 自定义设备名、`board_id.py` 串口↔板子对照、多构建目标（S3 / 经典 ESP32）、`scan`/`netcheck` 自检、4 MB 分区双槽 0x1F0000 | ✅ 代码完成 |
+| M6 多账号顺序打卡 | 账号表最多 6 个，依次登录+打卡，每人独立幂等、可单独开关（`account on/off`），单/多人同一份固件 | ✅ 代码完成，⏳ 待多账号实测 |
 | M7 长稳验证 | 连续 14 天无人值守、掉电自恢复、窗口内重试收敛 | ⏳ 进行中 |
+| M8 手机通知 | NotifyService：21:00 状态摘要 / 打卡结果 / 重试进度 / 23:30 截止告警；去重+每日配额+退避重试；三通道格式（GET 模板 / 纯文本 / JSON）+ 局域网中转；正文键自动适配（Server酱 用 `desp`）并识别**藏在 HTTP 200 里的失败**；**通知异常与打卡结论隔离** | ✅ 0.3.1 真机已推送到手机（Server酱）；⏳ 待观察自然夜的摘要与结果 |
 
 ## 10. 已知限制与 Roadmap
 
 | 限制 | 说明 / 计划 |
 | --- | --- |
+| 通知队列只在 RAM（8 条环形） | 重启会丢掉未发出的通知；计划落 NVS 以便断电补发。推送本身有退避重试（5/30/300/600 s，最多 4 次） |
 | 日志仅在内存（128 行环形缓冲） | 掉电会丢失；`status` 里的 `last` 字段已持久化结果。计划加 flash 日志 |
 | 二次验证码中继未实现（F2） | 若服务端某天清除了指纹信任，设备会报 `NEED_MFA`；计划接入蓝牙回传验证码 |
 | 会话 TTL 约 1 小时 | 所以设备每天在窗口起点重新登录；若平台改成更短的 TTL，需把预登录贴近打卡时间 |

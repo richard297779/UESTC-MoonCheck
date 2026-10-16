@@ -51,15 +51,19 @@ class AppConfig {
   /// @brief 重新从 NVS 载入配置（丢弃 applyProfile() 的运行期覆盖）。
   Result reload();
 
-  // ---- 多人顺序打卡（单人版默认关闭；关闭时以下接口不影响任何既有行为）----
+  // ---- 账号表（唯一事实来源；单人 = 表里只有一条）----
   /// @brief 把某个账号套用到**内存**配置（不落盘）。
-  /// @note 多人执行器据此**原样复用**既有的单账号登录/打卡链路，无需两套业务代码。
+  /// @note 登录/打卡链路只有一套：执行器先把选定的账号 applyProfile() 进去，
+  ///       再按既有的单账号流程走，因此**不需要**为多人另写一份业务代码。
   void applyProfile(const CheckinProfile& profile);
 
-  /// @brief 是否启用多人顺序打卡。
-  bool multiUserEnabled() const { return m_multiEnabled; }
-  /// @brief 开关多人模式（持久化）。
-  Result setMultiUserEnabled(bool enabled);
+  /// @brief 当前内存配置对应的是哪个账号（status / 回执里显示，避免"给谁打了卡"看不清）。
+  /// @note 从未 applyProfile 过时为 `"device"`（= 设备自身 NVS 里的 auth/loc）。
+  const String& activeAccount() const { return m_activeLabel; }
+
+  /// @brief 用设备自身的 NVS 配置（auth/loc）合成一条账号记录。
+  /// @note 账号表为空时使用（老设备只配过 auth 的迁移路径），等价于「列表第一个用户」。
+  CheckinProfile deviceProfile() const;
 
   /// @brief 相邻两个账号之间的间隔秒数（错峰，默认 20 s）。
   uint16_t multiGapSeconds() const { return m_multiGapSeconds; }
@@ -69,6 +73,27 @@ class AppConfig {
   /// @brief 设置自定义设备标签（BLE 广播名后缀）。
   /// @note 只允许 `A-Z a-z 0-9 - _`，最长 12 字符；传空串表示恢复"MAC 尾号"命名。
   Result setDeviceLabel(const String& label);
+
+  // ---- 手机通知（只做「设备 -> 手机」单向出口，不接收任何远程指令）----
+  /// @brief 总开关（关闭时任何事件都不发）。
+  bool notifyEnabled() const { return m_notifyEnabled; }
+  /// @brief 推送样式：0=GET 模板(Bark/Server酱) 1=POST 纯文本(ntfy) 2=POST JSON(钉钉/自建中转)。
+  uint8_t notifyStyle() const { return m_notifyStyle; }
+  /// @brief 完整推送 URL（含密钥，**绝不整条打印**）；style=0 时支持 {title} / {body} 占位。
+  const String& notifyUrl() const { return m_notifyUrl; }
+  /// @brief URL 脱敏形式（只保留 scheme + host + 掩码），供 status / 日志使用。
+  String notifyUrlMasked() const;
+  /// @brief 同一事件两次推送之间的最小间隔（去重/限流）。
+  uint16_t notifyGapSeconds() const { return m_notifyGapSeconds; }
+  /// @brief 每日推送上限（防止故障时刷屏或触发对端限流）。
+  uint8_t notifyDailyQuota() const { return m_notifyDailyQuota; }
+
+  /// @brief 分项设置通知配置：传空串/负数表示"不改这一项"。
+  /// @param enabled -1=不改，0/1=设置开关
+  /// @param style   -1=不改，0/1/2=设置样式
+  /// @param gap     -1=不改，0-3600=设置去重间隔秒
+  /// @param quota   -1=不改，0-255=设置每日上限
+  Result setNotify(int enabled, int style, const String& url, int gap, int quota);
 
   /// @brief 记录最近一次打卡结果（持久化，掉电重启后仍可查询）。
   Result setLastResult(const String& date, bool success, const String& message);
@@ -97,7 +122,12 @@ class AppConfig {
   LocationConfig m_location;
   ScheduleConfig m_schedule;
   String m_deviceLabel;   ///< 自定义 BLE 名标签（空=用 MAC 尾号）
-  bool m_multiEnabled = false;   ///< 多人顺序打卡开关
+  String m_activeLabel = "device";  ///< 当前内存配置对应的账号标签（运行期，不落盘）
   uint16_t m_multiGapSeconds = 20;  ///< 账号之间的间隔秒数
+  bool m_notifyEnabled = false;     ///< 通知总开关
+  uint8_t m_notifyStyle = 2;        ///< 0=GET 模板 1=POST 纯文本 2=POST JSON
+  String m_notifyUrl;               ///< 推送 URL（含 token，只输出 host）
+  uint16_t m_notifyGapSeconds = 60; ///< 同事件去重间隔
+  uint8_t m_notifyDailyQuota = 40;  ///< 每日推送上限
   SemaphoreHandle_t m_mutex = nullptr;
 };

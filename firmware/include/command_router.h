@@ -21,6 +21,7 @@
 #include "cookie_jar.h"
 #include "http_client.h"
 #include "multi_checkin.h"
+#include "notify_service.h"
 #include "status_led.h"
 #include "task_scheduler.h"
 #include "time_service.h"
@@ -42,6 +43,8 @@ class CommandRouter {
     Probe,            ///< 定时预登录体检
     DailyCheckin,     ///< 定时自动打卡
     MultiCheckin,     ///< 多人顺序打卡（一次跑完所有账号）
+    NotifyTest,       ///< 立即发一条测试通知（走真实链路，不占队列去重）
+    DeadlineMissed,   ///< 定时：窗口关闭仍未成功 -> 告警 + 手机通知
   };
 
   /// @brief 任务项（定长，可安全放入 FreeRTOS 队列）。
@@ -56,7 +59,7 @@ class CommandRouter {
   Result begin(AppConfig& config, CookieJar& cookies, WifiManager& wifi, TimeService& time,
                CasAuth& auth, CheckinApi& api, HttpClient& http, CheckinService& checkin,
                BleService& ble, TaskScheduler& scheduler, StatusLed& led, AccountStore& accounts,
-               MultiCheckin& multi);
+               MultiCheckin& multi, NotifyService& notify);
 
   /// @brief BLE 收到一行指令（**运行在 NimBLE 回调里，只入队，不做解析**）。
   void onBleLine(const String& line);
@@ -87,7 +90,10 @@ class CommandRouter {
   void handleFactoryReset(JsonObjectConst request, int32_t id);
   void handleTestTime(int32_t id);
   void handleAccountAdd(JsonObjectConst request, int32_t id);
+  /// @brief 单独开关某个账号是否参与打卡：{"op":"account.enable","label":"A01","on":false}
+  void handleAccountEnable(JsonObjectConst request, int32_t id);
   void handleMultiSet(JsonObjectConst request, int32_t id);
+  void handleNotifySet(JsonObjectConst request, int32_t id);
 
   // ---- 指令处理（慢，在 net_task 中执行）----
   void execute(const WorkItem& item);
@@ -97,9 +103,15 @@ class CommandRouter {
   void workTestHttp(const WorkItem& item);
   void workTestLogin(const WorkItem& item);
   void workTestChain(const WorkItem& item);
-  void workTestProbe(const WorkItem& item, bool fromSchedule);
-  void workTestCheckin(const WorkItem& item, bool fromSchedule);
+  void workTestProbe(const WorkItem& item);
+  void workTestCheckin(const WorkItem& item);
   void workMultiCheckin(const WorkItem& item);
+  /// @brief 一轮账号执行的文案（0 个生效账号时给出可操作的提示）。
+  String multiRunMessage(const MultiCheckin::RunResult& run, bool probeOnly) const;
+  /// @brief 21:00 状态摘要正文（逐账号一行，总长截到正文上限以内）。
+  String multiStatusDigest(const MultiCheckin::RunResult& run) const;
+  void workNotifyTest(const WorkItem& item);
+  void workDeadlineMissed(const WorkItem& item);
 
   // ---- 输出辅助 ----
   void replyOk(int32_t id, const String& message, const String& dataJson = "");
@@ -121,5 +133,6 @@ class CommandRouter {
   StatusLed* m_led = nullptr;
   AccountStore* m_accounts = nullptr;
   MultiCheckin* m_multi = nullptr;
+  NotifyService* m_notify = nullptr;
   QueueHandle_t m_queue = nullptr;
 };

@@ -34,8 +34,13 @@ constexpr const char* kNvsLastOk = "last_ok";
 constexpr const char* kNvsLastMsg = "last_msg";
 constexpr const char* kNvsLastTs = "last_ts";
 constexpr const char* kNvsDevLabel = "dev_label";
-constexpr const char* kNvsMultiOn = "multi_on";
+// 旧键 multi_on（单人/多人开关）已废弃：账号列表是唯一事实来源，不再读写。
 constexpr const char* kNvsMultiGap = "multi_gap";
+constexpr const char* kNvsNotifyOn = "n_on";
+constexpr const char* kNvsNotifyStyle = "n_style";
+constexpr const char* kNvsNotifyUrl = "n_url";
+constexpr const char* kNvsNotifyGap = "n_gap";
+constexpr const char* kNvsNotifyQuota = "n_quota";
 
 /// @brief 默认坐标：平台公布的打卡点中心（半径 130 m，距离 0 m，天然在范围内）。
 /// @note 仅作兜底的默认值。请在蓝牙配网时用 loc.set 写入**你自己宿舍的实测坐标**
@@ -98,14 +103,15 @@ Result AppConfig::loadAll() {
   // ---- 设备标签（BLE 名）----
   m_deviceLabel = getStringSafe(m_prefs, kNvsDevLabel, "");
 
-  // ---- 多人顺序打卡（多人版构建默认开启）----
-#ifdef WANAN_MULTIUSER
-  constexpr bool kMultiDefault = true;
-#else
-  constexpr bool kMultiDefault = false;
-#endif
-  m_multiEnabled = m_prefs.getBool(kNvsMultiOn, kMultiDefault);
+  // ---- 账号之间的间隔（打卡顺序由账号表决定，不再有单人/多人开关）----
   m_multiGapSeconds = static_cast<uint16_t>(m_prefs.getUShort(kNvsMultiGap, 20));
+
+  // ---- 手机通知（默认关闭：没配 URL 之前不会有任何出站请求）----
+  m_notifyEnabled = m_prefs.getBool(kNvsNotifyOn, false);
+  m_notifyStyle = static_cast<uint8_t>(m_prefs.getUChar(kNvsNotifyStyle, 2));
+  m_notifyUrl = getStringSafe(m_prefs, kNvsNotifyUrl, "");
+  m_notifyGapSeconds = static_cast<uint16_t>(m_prefs.getUShort(kNvsNotifyGap, 60));
+  m_notifyDailyQuota = static_cast<uint8_t>(m_prefs.getUChar(kNvsNotifyQuota, 40));
 
   // ---- 账号 ----
   m_auth.studentId = getStringSafe(m_prefs, kNvsAuthUser, "");
@@ -241,6 +247,7 @@ Result AppConfig::reload() {
   if (!m_opened) return Result::NotReady;
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   const Result result = loadAll();
+  m_activeLabel = "device";  // 回到 NVS 里那份"设备自己的"凭证
   if (m_mutex) xSemaphoreGive(m_mutex);
   return result;
 }
@@ -256,16 +263,23 @@ void AppConfig::applyProfile(const CheckinProfile& profile) {
     if (profile.address.length() > 0) m_location.address = profile.address;
   }
   if (m_mutex) xSemaphoreGive(m_mutex);
-  // 注意：**不写 NVS** —— 全局配置仍保持"这台设备自己的账号"，多人只是运行期切换。
+  // 注意：**不写 NVS** —— 全局配置只是"没有账号表时"的兜底，执行器按账号运行期切换。
+  m_activeLabel = profile.label.length() > 0 ? profile.label : String("device");
 }
 
-Result AppConfig::setMultiUserEnabled(bool enabled) {
-  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  m_multiEnabled = enabled;
-  m_prefs.putBool(kNvsMultiOn, enabled);
-  if (m_mutex) xSemaphoreGive(m_mutex);
-  LOG_I(kTag, "multi-user checkin = %d", enabled ? 1 : 0);
-  return Result::Ok;
+CheckinProfile AppConfig::deviceProfile() const {
+  // 账号表为空时的兜底：用设备自身的 auth/loc 配置合成一条，
+  // 语义上等价于"列表里的第一个用户"（老设备只配过 auth 也能直接跑）。
+  CheckinProfile profile;
+  profile.enabled = true;
+  profile.label = m_deviceLabel.length() > 0 ? m_deviceLabel : String("self");
+  profile.studentId = m_auth.studentId;
+  profile.password = m_auth.password;
+  profile.fingerprint = m_auth.fingerprint;
+  profile.latitude = m_location.latitude;
+  profile.longitude = m_location.longitude;
+  profile.address = m_location.address;
+  return profile;
 }
 
 Result AppConfig::setMultiGapSeconds(uint16_t seconds) {
@@ -312,20 +326,24 @@ String AppConfig::toJsonSummary() const {
     maskedUser = maskedUser.substring(0, 4) + "******";
   }
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  char buffer[512];
+  char buffer[704];
   snprintf(buffer, sizeof(buffer),
-           "{\"device\":\"%s\",\"label\":\"%s\",\"wifiSsid\":\"%s\",\"wifiConfigured\":%s,\"user\":\"%s\","
+           "{\"device\":\"%s\",\"account\":\"%s\",\"label\":\"%s\",\"wifiSsid\":\"%s\",\"wifiConfigured\":%s,\"user\":\"%s\","
            "\"passwordSet\":%s,\"fingerprintSet\":%s,"
            "\"location\":{\"lat\":%.6f,\"lng\":%.6f,\"address\":\"%s\"},"
            "\"schedule\":{\"checkinAt\":\"%s\",\"windowEnd\":\"%s\",\"jitterSeconds\":%u,"
-           "\"autoDaily\":%s},\"multiUser\":%s,\"multiGap\":%u}",
-           bleDeviceName().c_str(), m_deviceLabel.c_str(),
+           "\"autoDaily\":%s},\"accountGap\":%u,"
+           "\"notifyOn\":%s,\"notifyStyle\":\"%s\",\"notifyUrl\":\"%s\"}",
+           bleDeviceName().c_str(), m_activeLabel.c_str(), m_deviceLabel.c_str(),
            m_wifi.ssid.c_str(), m_wifi.isConfigured() ? "true" : "false", maskedUser.c_str(),
            m_auth.password.length() ? "true" : "false", m_auth.hasFingerprint() ? "true" : "false",
            m_location.latitude, m_location.longitude, m_location.address.c_str(),
            m_schedule.checkinAt.c_str(), m_schedule.windowEnd.c_str(), m_schedule.jitterSeconds,
-           m_schedule.autoDailyEnabled ? "true" : "false", m_multiEnabled ? "true" : "false",
-           m_multiGapSeconds);
+           m_schedule.autoDailyEnabled ? "true" : "false",
+           m_multiGapSeconds,
+            m_notifyEnabled ? "true" : "false",
+            m_notifyStyle == 0 ? "get" : (m_notifyStyle == 1 ? "post_text" : "post_json"),
+            notifyUrlMasked().c_str());
   if (m_mutex) xSemaphoreGive(m_mutex);
   return String(buffer);
 }
@@ -349,6 +367,49 @@ bool AppConfig::isLastResultOkFor(const String& date) {
   const String storedDate = getStringSafe(m_prefs, kNvsLastDate, "");
   if (storedDate != date) return false;
   return m_prefs.getBool(kNvsLastOk, false);
+}
+
+Result AppConfig::setNotify(int enabled, int style, const String& url, int gap, int quota) {
+  if (style >= 3 || gap > 3600 || quota > 200) return Result::InvalidParam;
+  if (url.length() > 0 && url.length() <= 6) return Result::InvalidParam;  // 明显不是完整 URL
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  Result result = Result::Ok;
+  if (enabled >= 0) {
+    m_notifyEnabled = (enabled != 0);
+    m_prefs.putBool(kNvsNotifyOn, m_notifyEnabled);
+  }
+  if (style >= 0) {
+    m_notifyStyle = static_cast<uint8_t>(style);
+    m_prefs.putUChar(kNvsNotifyStyle, m_notifyStyle);
+  }
+  if (url.length() > 0) {
+    m_notifyUrl = url;
+    result = persistString(kNvsNotifyUrl, m_notifyUrl);
+  }
+  if (gap >= 0) {
+    m_notifyGapSeconds = static_cast<uint16_t>(gap);
+    m_prefs.putUShort(kNvsNotifyGap, m_notifyGapSeconds);
+  }
+  if (quota >= 0) {
+    m_notifyDailyQuota = static_cast<uint8_t>(quota);
+    m_prefs.putUChar(kNvsNotifyQuota, m_notifyDailyQuota);
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  // 只报脱敏后的站点，绝不打印整条 URL（里面带着 token）
+  LOG_I(kTag, "notify set: on=%d style=%u gap=%us quota=%u url=%s", m_notifyEnabled ? 1 : 0,
+        m_notifyStyle, m_notifyGapSeconds, m_notifyDailyQuota, notifyUrlMasked().c_str());
+  return result;
+}
+
+String AppConfig::notifyUrlMasked() const {
+  if (m_notifyUrl.length() == 0) return String("<unset>");
+  const int schemeEnd = m_notifyUrl.indexOf("://");
+  const int hostStart = (schemeEnd < 0) ? 0 : schemeEnd + 3;
+  int pathStart = m_notifyUrl.indexOf('/', hostStart);
+  if (pathStart < 0) pathStart = m_notifyUrl.indexOf('?', hostStart);
+  if (pathStart < 0) pathStart = m_notifyUrl.length();
+  const String head = m_notifyUrl.substring(0, pathStart);  // scheme + host(+port)，不含路径与 token
+  return head + "/***(len=" + String(m_notifyUrl.length()) + ")";
 }
 
 Result AppConfig::setLastResult(const String& date, bool success, const String& message) {

@@ -26,32 +26,35 @@ firmware/
 
 | 环境名（env） | 用途 | 板子 | Flash / PSRAM | 分区表 | 状态 LED |
 | --- | --- | --- | --- | --- | --- |
-| `esp32-s3-devkitc-1` | **单人版**（`default_envs`） | ESP32-S3-N16R8 | 16 MB / 8 MB OPI | `partitions_16mb.csv` | WS2812 @ GPIO48 |
-| `esp32-s3-multiuser` | **多人顺序打卡版**（同一块 S3，只多 `-DWANAN_MULTIUSER=1`） | ESP32-S3-N16R8 | 16 MB / 8 MB OPI | `partitions_16mb.csv` | 同上 |
-| `esp32-wroom-32-COM6` / `esp32-wroom-32-COM7` | 经典 ESP32 **单人版**（按 COM 口各建一个 env） | ESP32-WROOM-32 | 4 MB / 无 | `partitions_4mb.csv` | 普通 LED @ GPIO2 |
-| `esp32-wroom-32-multiuser-COM6` / `-COM7` | 经典 ESP32 **多人版** | ESP32-WROOM-32 | 4 MB / 无 | `partitions_4mb.csv` | 普通 LED @ GPIO2 |
+| `esp32-s3-devkitc-1` | ESP32-S3 主目标（`default_envs`） | ESP32-S3-N16R8 | 16 MB / 8 MB OPI | `partitions_16mb.csv` | WS2812 @ GPIO48 |
+| `esp32-wroom-32-COM6` / `esp32-wroom-32-COM7` | 经典 ESP32（按 COM 口各建一个 env） | ESP32-WROOM-32 | 4 MB / 无 | `partitions_4mb.csv`（双槽 0x1F0000） | 普通 LED @ GPIO2 |
 
-> 单人版与多人版**共享全部代码**，只多一个编译宏（影响：多人开关默认值 + 版本号后缀 `-multi`）。
-> 两者都能用 `multi.set` 现场切换 ⇒ **回退到单人行为不需要重刷**。多人设计见 `docs/multi-user-design.md`。
+> **只有一种固件**：打几个人由**账号表**决定（`account.add` 加人、`account.enable` 逐个开关，
+> 表为空时自动用设备自身的 `auth` + `loc`）。不再有 `-DWANAN_MULTIUSER` 编译宏与「多人版 env」，
+> 所以切换人数**不需要重新编译或重刷**。多人（多账号）设计见 `docs/multi-user-design.md`。
+
+> 📐 **4 MB 分区表已改为方案 B（双槽扩容）**：`nvs 0x9000/0x5000`、`otadata 0xE000/0x2000`、
+> `app0 0x10000` 与 `app1 0x200000` 各 `0x1F0000`（2,031,616 B，保留 OTA）；旧值 `0x190000` 已废弃。
+> **改了分区表必须整片重刷（含 `partitions.bin`）**，只刷 app 会错位。当前实测占用：
+> S3 Flash 30.3%（1,270,925 B）；WROOM-32 Flash 68.0%（1,381,353 / 2,031,616）、RAM 18.8%。
+> 分区 CSV 必须保持**纯 ASCII**（PlatformIO 用系统 GBK 解析，中文注释会炸构建）。
 
 > ⚠️ 经典 ESP32 需要另一套工具链 `toolchain-xtensa-esp32`（约 100 MB）。未安装时 VSCode 展开该
-> env 的任务树会**静默下载**（表现为一直 loading task）。先手动装好即可：
-> `pio pkg install -g -p "platformio/toolchain-xtensa-esp32"`；或把
-> `platformio.wroom32.ini.example` 粘进 `platformio.ini` 后再 Reload。
+> env 的任务树会**静默下载**（表现为一直 loading）。先装好即可：
+> `pio pkg install -g -p "platformio/toolchain-xtensa-esp32"`。
 
 1. VSCode 打开 **`firmware/` 这个文件夹**（不是仓库根目录），PlatformIO 会自动识别工程；
-2. **首次构建会下载 PlatformIO Core + espressif32 平台 + 对应工具链**（经典 ESP32 与 S3 是两套 xtensa 工具链）；
+2. **首次构建会下载 PlatformIO Core + espressif32 平台 + 对应工具链**；
 3. **切换目标**：左侧 PlatformIO 图标 → **Environment 选择器** → 选一个 env；此后 `Build` / `Upload` / `Monitor` 只作用于它；
-4. 串口默认自动探测；**多块板同时插着时务必写死端口**（对应 env 里 `upload_port = COMx`，或命令行 `--upload-port`），排障见 §9。S3 走原生 USB，经典 ESP32 走 UART0（需外接 CP2102/CH340）；
-5. **LED 不同不用改代码**：加编译标志 `-DWANAN_LED_PIN=2 -DWANAN_LED_IS_RGB=0`，或 `-DWANAN_LED_PIN=-1` 彻底关掉；
-6. **无 PSRAM 的板子（WROOM-32）自动降级**：日志环形缓冲退回内部堆（`logger.cpp` 已有回退），功能完全一致。
+4. 串口：S3 走原生 USB（`USB 串行设备 (COMx)`），经典 ESP32 走 UART0（外接 CP2102/CH340）。多块板同时插着时**务必在对应 env 里写死 `upload_port`**，或烧录时加 `--upload-port COMx`；
+5. **LED 不同不用改代码**：`-DWANAN_LED_PIN=2 -DWANAN_LED_IS_RGB=0`，或 `-DWANAN_LED_PIN=-1` 关闭；
+6. **无 PSRAM 的板子自动降级**：日志环形缓冲退回内部堆（`logger.cpp` 已有回退），功能一致。
 
 命令行等价：
 
 ```powershell
-pio run -e esp32-s3-devkitc-1 -t upload    # 单人版
-pio run -e esp32-s3-multiuser  -t upload   # 多人版（同一块 S3）
-pio run -e esp32-wroom-32 -t upload --upload-port COM6     # 指定端口，避免刷错板
+pio run -e esp32-s3-devkitc-1 -t upload    # ESP32-S3（单/多人同一份固件）
+pio run -e esp32-wroom-32-COM6 -t upload   # 经典 ESP32（端口已写死在 env 里）
 pio device monitor --port COM5             # 串口 115200
 ```
 
@@ -59,7 +62,7 @@ pio device monitor --port COM5             # 串口 115200
 
 ```
 [.. ] I main: === WANAN checkin device booting ===
-[.. ] I main: firmware 0.1.0, built ...
+[.. ] I main: firmware 0.3.1, built ...
 [.. ] I logger: logger ready (ring=ok)
 [.. ] I app_config: config loaded: ready=0 user=unset bfp=0
 [.. ] I status_led: led ready: pin=48 rgb=1

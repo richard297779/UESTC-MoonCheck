@@ -87,10 +87,12 @@ void TaskScheduler::poll() {
   const int windowStartSeconds = schedule.windowStartMinutes * 60;
 
   // ---- 预登录体检：**窗口一开始就做**（每天一次）----
-  // 依据实测：① 平台只给"窗口内建立的会话"授权微应用（窗口外登录 100% 无效，2026-10-13 证实）；
-  //           ② 窗口内登录成功后，平台仍需约 10 分钟才放行（2026-10-12 22:00:16 → 22:10:03）。
-  // 因此体检时间从"打卡前 10 分钟"提前到窗口起点（21:00），给平台留足生效时间：
-  // 21:00 登录 → 21:10 前后授权完成 → 22:00 首次打卡即可成功。
+  // 为什么限定在窗口内：① SESSION TTL 实测约 1 小时，太早登录到 22:00 已经过期；
+  //                   ② 打卡提交本身只接受窗口内。
+  // （此处历史上写过"平台只给窗口内建立的会话授权"与"登录后需约 10 分钟才放行"，
+  //   两条均已被 docs/api-contract.md §8.7 推翻：真正的开关是门户预热
+  //   GET /api/isLoginFailure，与时段无关。）
+  // 21:00 体检 → 会话无效就地补登录并预热 → 22:00 直接提交。
   if (windowStartSeconds > 0 && secondsOfDay >= windowStartSeconds &&
       secondsOfDay < checkinSeconds && m_lastProbeDate != today) {
     m_lastProbeDate = today;
@@ -100,8 +102,10 @@ void TaskScheduler::poll() {
   }
 
   // ---- 打卡：窗口内**反复重试**直到确认成功或窗口结束 ----
-  // 实测（2026-10-12 22:00）：登录成功后平台约需数分钟才放行微应用，
-  // "一次不成就判终态失败"会直接错过整个打卡窗口。
+  // "一次不成就判终态失败"会错过整个窗口：会话可能刚好过期（TTL 约 1 h）、网络可能抖动、
+  // 平台侧也可能临时拒绝。
+  // （2026-10-12 曾把当时的失败归因为"登录后约需数分钟才放行"，真因是缺门户预热，
+  //   见 docs/api-contract.md §8.7；重试机制作为兜底保留。）
   if (secondsOfDay >= checkinSeconds && secondsOfDay < windowEndSeconds) {
     // 已确认成功则不再重试；状态变化时只记一次日志
     // （历史问题：这里原为每秒一行，既刷屏又会冲掉 128 行的日志环形缓冲）

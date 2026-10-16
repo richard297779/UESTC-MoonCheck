@@ -48,7 +48,8 @@ String escapeJson(const String& text) {
 Result CommandRouter::begin(AppConfig& config, CookieJar& cookies, WifiManager& wifi,
                             TimeService& time, CasAuth& auth, CheckinApi& api, HttpClient& http,
                             CheckinService& checkin, BleService& ble, TaskScheduler& scheduler,
-                            StatusLed& led, AccountStore& accounts, MultiCheckin& multi) {
+                            StatusLed& led, AccountStore& accounts, MultiCheckin& multi,
+                             NotifyService& notify) {
   m_config = &config;
   m_cookies = &cookies;
   m_wifi = &wifi;
@@ -62,8 +63,11 @@ Result CommandRouter::begin(AppConfig& config, CookieJar& cookies, WifiManager& 
   m_led = &led;
   m_accounts = &accounts;
   m_multi = &multi;
-  // 多人编排器的事件走同一个 BLE 出口
+  m_notify = &notify;
+  // 多人编排器与通知服务共用同一个 BLE 事件出口
   multi.setEventSink(
+      [this](const String& type, const String& payload) { emitEvent(type, payload); });
+  notify.setEventSink(
       [this](const String& type, const String& payload) { emitEvent(type, payload); });
 
   m_queue = xQueueCreate(kQueueLength, sizeof(WorkItem));
@@ -97,6 +101,8 @@ void CommandRouter::processPending() {
   if (xQueueReceive(m_queue, &item, pdMS_TO_TICKS(200)) == pdTRUE) {
     execute(item);
   }
+  // 通知出口：每轮都推一下待发队列（内部有退避/去重/配额，不会刷屏）
+  if (m_notify != nullptr) m_notify->pump();
 }
 
 // ---------------------------------------------------------------- 事件与回执
@@ -268,6 +274,18 @@ void CommandRouter::dispatchCommand(const String& line) {
     handleScheduleSet(request, id);
   } else if (op == "auto.set") {
     handleAutoSet(request, id);
+  } else if (op == "notify.set") {
+    handleNotifySet(request, id);
+  } else if (op == "notify.status") {
+    if (m_notify == nullptr) {
+      replyError(id, Result::NotReady, "notify service unavailable");
+    } else {
+      replyOk(id, "notify", m_notify->statusJson());
+    }
+  } else if (op == "test.notify") {
+    if (!enqueue(WorkKind::NotifyTest, request["body"] | "", false, id)) {
+      replyError(id, Result::InternalError, "device busy");
+    }
   } else if (op == "account.add") {
     handleAccountAdd(request, id);
   } else if (op == "account.list") {
@@ -288,6 +306,8 @@ void CommandRouter::dispatchCommand(const String& line) {
         replyOk(id, "account removed");
       }
     }
+  } else if (op == "account.enable") {
+    handleAccountEnable(request, id);
   } else if (op == "account.clear") {
     if (m_accounts != nullptr) m_accounts->clearAll();
     replyOk(id, "accounts cleared");
@@ -484,6 +504,16 @@ void CommandRouter::handleAccountAdd(JsonObjectConst request, int32_t id) {
   }
   CheckinProfile profile;
   profile.label = request["label"] | "";
+  // 每个账号可单独设置是否生效；请求里不带 enabled 时**沿用已有开关**
+  // （否则"改个密码"会把被关掉的账号偷偷重新打开，当晚就多打一次卡）。
+  profile.enabled = request["enabled"] | true;
+  const int existingIndex = m_accounts->indexOfLabel(profile.label);
+  if (existingIndex >= 0 && !request.containsKey("enabled")) {
+    CheckinProfile existing;
+    if (m_accounts->get(static_cast<size_t>(existingIndex), existing)) {
+      profile.enabled = existing.enabled;
+    }
+  }
   profile.studentId = String(request["user"] | "");
   profile.password = String(request["pass"] | "");
   profile.fingerprint = String(request["bfp"] | "");
@@ -520,8 +550,7 @@ void CommandRouter::handleMultiSet(JsonObjectConst request, int32_t id) {
     replyError(id, Result::NotReady, "config unavailable");
     return;
   }
-  const bool enabled = request["enabled"] | true;
-  m_config->setMultiUserEnabled(enabled);
+  // 单人/多人开关已取消：账号表里有几条就跑几条，只保留"账号间隔"这一项。
   if (request.containsKey("gap_s")) {
     const uint16_t gap = request["gap_s"] | static_cast<uint16_t>(20);
     if (m_config->setMultiGapSeconds(gap) != Result::Ok) {
@@ -530,11 +559,43 @@ void CommandRouter::handleMultiSet(JsonObjectConst request, int32_t id) {
     }
   }
   char data[160];
-  snprintf(data, sizeof(data), "{\"multiUser\":%s,\"gapSeconds\":%u,\"accounts\":%u}",
-           m_config->multiUserEnabled() ? "true" : "false",
+  snprintf(data, sizeof(data), "{\"gapSeconds\":%u,\"accounts\":%u,\"enabled\":%u}",
            static_cast<unsigned>(m_config->multiGapSeconds()),
-           m_accounts == nullptr ? 0u : static_cast<unsigned>(m_accounts->count()));
-  replyOk(id, m_config->multiUserEnabled() ? "multi-user enabled" : "multi-user disabled", data);
+           m_accounts == nullptr ? 0u : static_cast<unsigned>(m_accounts->count()),
+           m_accounts == nullptr ? 0u : static_cast<unsigned>(m_accounts->enabledCount()));
+  replyOk(id, "account gap updated", data);
+}
+
+void CommandRouter::handleAccountEnable(JsonObjectConst request, int32_t id) {
+  if (m_accounts == nullptr) {
+    replyError(id, Result::NotReady, "account store unavailable");
+    return;
+  }
+  const String label = request["label"] | "";
+  if (label.length() == 0) {
+    replyError(id, Result::InvalidParam, "label required");
+    return;
+  }
+  if (!request["on"].is<bool>()) {
+    replyError(id, Result::InvalidParam, "on (true/false) required");
+    return;
+  }
+  const bool on = request["on"].as<bool>();
+  const Result result = m_accounts->setEnabled(label, on);
+  if (result == Result::NotFound) {
+    replyError(id, result, "account not found");
+    return;
+  }
+  if (result != Result::Ok) {
+    replyError(id, result, "save failed");
+    return;
+  }
+  char data[128];
+  snprintf(data, sizeof(data), "{\"label\":\"%s\",\"on\":%s,\"enabled\":%u,\"total\":%u}",
+           label.c_str(), on ? "true" : "false",
+           static_cast<unsigned>(m_accounts->enabledCount()),
+           static_cast<unsigned>(m_accounts->count()));
+  replyOk(id, on ? "account enabled" : "account disabled", data);
 }
 
 void CommandRouter::handleLogs(JsonObjectConst request, int32_t id) {
@@ -595,29 +656,27 @@ void CommandRouter::execute(const WorkItem& item) {
     case WorkKind::TestHttp: workTestHttp(item); break;
     case WorkKind::TestLogin: workTestLogin(item); break;
     case WorkKind::TestChain: workTestChain(item); break;
-    case WorkKind::TestProbe: workTestProbe(item, false); break;
-    case WorkKind::TestCheckin: workTestCheckin(item, false); break;
+    case WorkKind::TestProbe: workTestProbe(item); break;
+    case WorkKind::TestCheckin: workTestCheckin(item); break;
     case WorkKind::Probe:
-      // 多人模式：预登录体检也按账号各来一遍（runAll 内部只做体检不提交）
-      if (m_config != nullptr && m_config->multiUserEnabled()) {
+      // 预登录体检：按账号表逐个体检（runAll 内部只做体检不提交）。
+      // 表为空时 runAll 自动退回设备自身配置 = 「列表第一个用户」。
+      {
         WorkItem probeItem;
         probeItem.kind = WorkKind::MultiCheckin;
         probeItem.force = false;
-        probeItem.requestId = 0;
+        probeItem.requestId = 0;  // 0 = 来自调度器（回执只给 BLE 事件，不发 replyOk）
         memcpy(probeItem.payload, "probe", 6);
         workMultiCheckin(probeItem);
-      } else {
-        workTestProbe(item, true);
       }
       break;
     case WorkKind::DailyCheckin:
-      if (m_config != nullptr && m_config->multiUserEnabled()) {
-        workMultiCheckin(item);
-      } else {
-        workTestCheckin(item, true);
-      }
+      // 打卡同样只有这一条路：单人 = 表里一条，多人 = 表里多条。
+      workMultiCheckin(item);
       break;
     case WorkKind::MultiCheckin: workMultiCheckin(item); break;
+    case WorkKind::NotifyTest: workNotifyTest(item); break;
+    case WorkKind::DeadlineMissed: workDeadlineMissed(item); break;
   }
 }
 
@@ -629,6 +688,14 @@ void CommandRouter::workWifiConnect(const WorkItem& item) {
     setBusy(false);
     flashResult(false);
     emitEvent("wifi", "\"state\":\"failed\"");
+    // 网络不可用：入队等链路恢复后再投递（同键按 notifyGapSeconds 去重，
+    // 这里再按小时分桶，确保断网期间最多每小时一条）。
+    if (m_notify != nullptr) {
+      const uint32_t hour = m_time != nullptr ? m_time->now() / 3600 : 0;
+      m_notify->post(NotifyKind::NetDown,
+                     "Wi-Fi 连接失败（SSID 不可达或口令错误），设备已离线，恢复后会自动补发。",
+                     String("net/") + String(static_cast<unsigned>(hour)));
+    }
     replyError(item.requestId, result, "wifi connect failed (check ssid/password)");
     return;
   }
@@ -710,7 +777,8 @@ void CommandRouter::workTestLogin(const WorkItem& item) {
   emitEvent("progress", "\"stage\":\"login\",\"detail\":\"start\"");
 
   // 统一走 CheckinService 的登录策略：**窗口外默认不登录**。
-  // 平台不会授权"窗口外建立的会话"，此时登录只会白费一次登录次数并造成误解。
+  // 原因不是"窗口外不给授权"（§8.7 已定案：授权是会话属性，靠门户预热解锁，与时段无关），
+  // 而是 SESSION TTL 实测约 1 小时 + 提交只接受窗口内 —— 窗口外登录到点必过期，白费一次。
   // 需要强制验证登录链本身时：{"op":"test.login","force":true}（控制台：login force）
   bool didLogin = false;
   String detail;
@@ -897,7 +965,7 @@ void CommandRouter::workTestChain(const WorkItem& item) {
   replyOk(item.requestId, message, data);
 }
 
-void CommandRouter::workTestProbe(const WorkItem& item, bool fromSchedule) {
+void CommandRouter::workTestProbe(const WorkItem& item) {
   setBusy(true);
   emitEvent("progress", "\"stage\":\"probe\",\"detail\":\"checking session\"");
 
@@ -908,7 +976,7 @@ void CommandRouter::workTestProbe(const WorkItem& item, bool fromSchedule) {
 
   if (result != Result::Ok) {
     flashResult(false);
-    if (!fromSchedule) replyError(item.requestId, result, error);
+    replyError(item.requestId, result, error);
     return;
   }
 
@@ -928,42 +996,13 @@ void CommandRouter::workTestProbe(const WorkItem& item, bool fromSchedule) {
            report.today.abnormalFlag ? "true" : "false", report.location.name.c_str(),
            report.location.radiusMeter, static_cast<unsigned>(report.elapsedMs));
 
-  if (fromSchedule) {
-    // 预登录体检发现会话失效时，趁"仍在打卡窗口内"立刻补一次登录。
-    // 平台只给窗口内建立的会话授予微应用访问权（见 docs/api-contract.md §8.4），
-    // 拖到 22:00 再登录会浪费窗口时间、也会失去提前暴露问题的价值。
-    if (!report.sessionValid) {
-      emitEvent("alert",
-                "\"kind\":\"session\",\"msg\":\"session invalid at pre-login, logging in now\"");
-      bool didLogin = false;
-      String loginError;
-      const Result loginResult = m_checkin->ensureSession(didLogin, loginError);
-      if (loginResult == Result::Ok && didLogin) {
-        String probeError;
-        ProbeReport refreshed;
-        if (m_checkin->probe(refreshed, probeError) == Result::Ok) {
-          report = refreshed;
-        }
-      } else if (loginResult == Result::NeedMfa) {
-        emitEvent("alert", "\"kind\":\"mfa\",\"msg\":\"second factor required at pre-login\"");
-      }
-      flashResult(report.sessionValid);
-    }
-    emitEvent("result", "\"kind\":\"probe\",\"sessionValid\":" +
-                            String(report.sessionValid ? "true" : "false") +
-                            ",\"h5Reached\":" + String(report.h5Reached ? "true" : "false") +
-                            ",\"status\":\"" + report.today.recordStatusCode + "\"");
-    return;
-  }
-
-  if (!report.sessionValid) {
-    replyOk(item.requestId, "probe done: session invalid, run test.login", data);
-  } else {
-    replyOk(item.requestId, "probe done", data);
-  }
+  // 手动 test.probe：只回结果。定时触发的体检（Trigger::Probe）现在一律走
+  // workMultiCheckin(probe)，21:00 的每日状态摘要在那里发。
+  replyOk(item.requestId,
+          report.sessionValid ? "probe done" : "probe done: session invalid, run test.login", data);
 }
 
-void CommandRouter::workTestCheckin(const WorkItem& item, bool fromSchedule) {
+void CommandRouter::workTestCheckin(const WorkItem& item) {
   setBusy(true);
   emitEvent("progress", "\"stage\":\"checkin\",\"detail\":\"start\"");
 
@@ -975,78 +1014,283 @@ void CommandRouter::workTestCheckin(const WorkItem& item, bool fromSchedule) {
   const bool pending = (outcome == CheckinOutcome::Pending);
   if (!pending) flashResult(ok);  // Pending 既非成功也非失败，不闪灯
 
-  // 持久化最近一次打卡结果：掉电重启后仍可通过 status 查看
+  const String todayKey = m_time != nullptr ? m_time->todayString() : String();
+
+  // 持久化本轮结果。★ 只有「当前只有一个账号参与」才允许写全局 last —— 那是
+  // 调度器今晚不再重试的凭证；多账号时手动替某一个人补打，若写成 last=ok，
+  // 剩下的人今晚就再也不会被自动打了。多人场景只记到该账号自己的当天结果上。
+  const bool soleAccount = (m_accounts == nullptr) || (m_accounts->enabledCount() <= 1);
   if ((outcome == CheckinOutcome::Success) || (outcome == CheckinOutcome::AlreadyDone) ||
       (outcome == CheckinOutcome::Failed)) {
-    if (m_config != nullptr && m_time != nullptr) {
-      m_config->setLastResult(m_time->todayString(), ok, message);
+    if (m_config != nullptr) {
+      if (soleAccount) {
+        m_config->setLastResult(todayKey, ok, message);
+      } else if (m_accounts != nullptr) {
+        m_accounts->setResult(m_config->activeAccount(), todayKey, ok, message);
+        LOG_I(kTag, "manual check-in for %s recorded per-account; global last untouched",
+              m_config->activeAccount().c_str());
+      }
     }
   }
-
   switch (outcome) {
     case CheckinOutcome::Success:
       emitEvent("result", "\"ok\":true,\"msg\":\"" + escapeJson(message) + "\"");
+      if (m_notify != nullptr) {
+        m_notify->post(NotifyKind::CheckinOk, "打卡成功：" + message, todayKey + "/ok");
+      }
       replyOk(item.requestId, message.isEmpty() ? "checked in" : message);
       break;
     case CheckinOutcome::AlreadyDone:
       emitEvent("result", "\"ok\":true,\"already\":true,\"msg\":\"" + escapeJson(message) + "\"");
+      if (m_notify != nullptr) {
+        m_notify->post(NotifyKind::CheckinOk, "今日已打卡：" + message, todayKey + "/ok");
+      }
       replyOk(item.requestId, message.isEmpty() ? "already checked in" : message);
       break;
     case CheckinOutcome::OutOfWindow:
-      if (!fromSchedule) replyError(item.requestId, Result::OutOfWindow, message);
+      // 手动路径不会重试：只回错误。窗口内的自动重试与「第 N 次重试」通知在 workMultiCheckin。
+      replyError(item.requestId, Result::OutOfWindow, message);
       break;
     case CheckinOutcome::NeedMfa:
       emitEvent("alert", "\"kind\":\"mfa\",\"msg\":\"second factor required\"");
-      if (!fromSchedule) replyError(item.requestId, Result::NeedMfa, message);
+      if (m_notify != nullptr) {
+        m_notify->post(NotifyKind::NeedMfa, "打卡被二次验证拦住：需要浏览器指纹或验证码",
+                       todayKey + "/mfa");
+      }
+      replyError(item.requestId, Result::NeedMfa, message);
       break;
     case CheckinOutcome::Failed:
       emitEvent("result", "\"ok\":false,\"msg\":\"" + escapeJson(message) + "\"");
-      if (!fromSchedule) replyError(item.requestId, Result::InternalError, message);
+      if (m_notify != nullptr) {
+        m_notify->post(NotifyKind::CheckinFail, "打卡失败：" + message, todayKey + "/fail");
+      }
+      replyError(item.requestId, Result::InternalError, message);
       break;
     case CheckinOutcome::Skipped:
-      if (!fromSchedule) replyOk(item.requestId, "skipped");
+      replyOk(item.requestId, "skipped");
       break;
     case CheckinOutcome::Pending:
-      // 会话已建立但平台尚未放行（实测有数分钟生效延迟）：**不算失败**，
-      // 调度器会在窗口内按 kCheckinRetrySeconds 自动重试。
+      // 会话已建立但平台尚未放行（实测有数分钟生效延迟）：**不算失败**。
+      // 手动路径不会重试，所以这里只回错误、不发「第 N 次重试」通知
+      // —— 窗口内的自动重试与重试通知都由 workMultiCheckin 承担。
       emitEvent("progress",
-                "\"stage\":\"checkin\",\"detail\":\"pending platform authorization, will retry\"");
-      if (!fromSchedule) {
-        replyError(item.requestId, Result::AppUnavailable, message);
-      }
+                "\"stage\":\"checkin\",\"detail\":\"pending platform authorization\"");
+      replyError(item.requestId, Result::AppUnavailable, message);
       break;
   }
+}
+
+String CommandRouter::multiRunMessage(const MultiCheckin::RunResult& run, bool probeOnly) const {
+  if (run.total == 0) {
+    // 账号表为空并且设备自身也没配过凭证
+    return "no accounts configured (use account.add, or auth + loc for a single user)";
+  }
+  if (run.enabledTotal == 0) {
+    return String("all ") + String(static_cast<unsigned>(run.total)) +
+               " accounts are switched off (account.enable <label> 1 to turn one on)";
+  }
+  String message = String(probeOnly ? "probe" : "check-in") + " run: " +
+                   String(static_cast<unsigned>(run.okCount)) + "/" +
+                   String(static_cast<unsigned>(run.enabledTotal)) + " ok";
+  if (run.disabledCount > 0) {
+    message += String(" (") + String(static_cast<unsigned>(run.disabledCount)) + " switched off)";
+  }
+  if (run.okCount < run.enabledTotal) message += " - see data for each account's reason";
+  return message;
+}
+
+String CommandRouter::multiStatusDigest(const MultiCheckin::RunResult& run) const {
+  // 正文上限 256 B（NotifyItem::body），这里控制在 ~240 字节以内。
+  String out;
+  if (m_time != nullptr) out += m_time->nowString("%H:%M") + " ";
+  out += String("生效") + String(static_cast<unsigned>(run.enabledTotal)) + "人";
+  if (run.disabledCount > 0) {
+    out += String("，关闭") + String(static_cast<unsigned>(run.disabledCount)) + "人";
+  }
+  out += String("，成功") + String(static_cast<unsigned>(run.okCount)) + "人；";
+
+  JsonDocument doc;
+  if (deserializeJson(doc, run.summary) == DeserializationError::Ok) {
+    bool first = true;
+    for (JsonObject one : doc.as<JsonArray>()) {
+      const String oneResult = one["result"] | "?";
+      if (oneResult == "disabled") continue;  // 关掉的账号不进每日摘要
+      if (!first) out += "、";
+      first = false;
+      out += String(one["label"] | "?") + "=" + oneResult;
+    }
+  }
+  if (m_config != nullptr) {
+    out += String("｜窗口") + m_config->schedule().windowStart + "-" +
+           m_config->schedule().windowEnd + " 打卡" + m_config->schedule().checkinAt;
+  }
+  return out;
 }
 
 void CommandRouter::workMultiCheckin(const WorkItem& item) {
   setBusy(true);
   const bool probeOnly = (strcmp(item.payload, "probe") == 0);
 
-  String summary;
-  size_t okCount = 0;
+  MultiCheckin::RunResult run;
   if (m_multi != nullptr) {
-    okCount = m_multi->runAll(item.force, probeOnly, summary);
+    run = m_multi->runAll(item.force, probeOnly);
   }
+  const size_t okCount = run.okCount;
+  const size_t total = run.enabledTotal;  // ★ 分母只算生效账号
 
   setBusy(false);
-  flashResult(okCount > 0);
+  // 生效账号为 0 = 「今晚本来就没有要打卡的人」，不该闪失败灯
+  if (total > 0) flashResult(okCount >= total);
 
-  String message;
-  const size_t total = (m_accounts != nullptr) ? m_accounts->count() : 0;
-  if (total == 0) {
-    message = "no accounts configured (use account.add first)";
-  } else if (okCount == 0) {
-    message = String("multi-user run finished: 0/") + String(static_cast<unsigned>(total)) +
-              " ok - see data for each account's reason";
-  } else {
-    message = String("multi-user ") + (probeOnly ? "probe" : "check-in") + " done: " +
-              String(static_cast<unsigned>(okCount)) + "/" + String(static_cast<unsigned>(total)) +
-              " ok";
-  }
+  const String message = multiRunMessage(run, probeOnly);
   emitEvent("result",
-            String("\"kind\":\"multi\",\"ok\":") + (okCount > 0 ? "true" : "false") +
-                ",\"accounts\":" + summary);
+            String("\"kind\":\"multi\",\"ok\":") + (total > 0 && okCount >= total ? "true" : "false") +
+                ",\"accounts\":" + run.summary);
   if (item.requestId != 0) {
-    replyOk(item.requestId, message, summary);
+    replyOk(item.requestId, message, run.summary);
   }
+
+  // ★ 必须把"整轮结论"写进 AppConfig::last —— 调度器的重试闸门与 DeadlineMissed
+  //   判定都只看 isLastResultOkFor(today)。
+  //   分母**只能**用生效账号数：把单独关闭的账号算进去，就永远凑不满 allOk，
+  //   于是"全员成功仍整夜每 180 s 重跑一轮"的老 bug 会换个形式复发。
+  //   体检（probeOnly）不提交打卡，因此**不能**写这个结论。
+  const bool allOk = (total > 0 && okCount >= total);
+  // 账号都在、但被**逐个单独关闭**了（enabledTotal==0）= 今晚没有需要打卡的人。
+  // 必须把它当成「今晚已了结」写进 last，否则调度器会空转重试到 23:30，
+  // 还会发一条「窗口已过仍未成功」的误报。
+  const bool nothingToDo = (total == 0 && run.total > 0);
+  const bool settled = allOk || nothingToDo;
+  if (!probeOnly && m_config != nullptr && m_time != nullptr && m_time->isSynced()) {
+    m_config->setLastResult(m_time->todayString(), settled, message);
+    LOG_I(kTag, "aggregate saved: %u/%u ok -> last=%s", static_cast<unsigned>(okCount),
+          static_cast<unsigned>(total), settled ? "confirmed" : "pending retry");
+  }
+
+  if (m_notify == nullptr || m_time == nullptr) return;
+
+  if (probeOnly) {
+    // 每天 21:00 的固定状态摘要（key=今天 -> 同一天不会重发）。
+    // 即使 0 个账号生效也照发 —— 摘要本身就会说明「生效 0 人」，这正是它的作用。
+    if (item.requestId != 0) return;  // 手动 probe 不占用当天这条
+    const String digest = multiStatusDigest(run);
+    m_notify->post(NotifyKind::StatusDigest, digest, m_time->todayString());
+    return;
+  }
+
+  // 打卡结果通知：没有人需要打卡（没配表，或全部单独关闭）时一条不发，
+  // 否则调度器每 180 s 一轮会反复推「本轮 0/0 成功」这种废话。
+  if (total == 0) return;
+
+  // 打卡：只发一条汇总（不逐账号刷屏）
+  String body = String("本轮 ") + String(static_cast<unsigned>(okCount)) + "/" +
+                String(static_cast<unsigned>(total)) + " 成功";
+  if (run.disabledCount > 0) {
+    body += String("（另有 ") + String(static_cast<unsigned>(run.disabledCount)) + " 个已单独关闭）";
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, run.summary) == DeserializationError::Ok) {
+    String failed;
+    for (JsonObject one : doc.as<JsonArray>()) {
+      const String oneResult = one["result"] | "";
+      if (oneResult == "ok" || oneResult == "already_done" || oneResult == "disabled") continue;
+      if (failed.length() > 0) failed += "、";
+      failed += String(one["label"] | "?") + "(" + oneResult + ")";
+    }
+    if (failed.length() > 0) body += "；未成功：" + failed;
+  }
+  const uint8_t round = m_notify->bumpAttempt();
+  // 全成功：一天一条（固定 key，后续轮次被去重挡住）。
+  // 有未成功：调度器还会重试 → 按 3 轮一组限流（只报第 1、4、7… 轮），
+  // 最终失败由 DeadlineMissed 收尾告警。
+  const bool announce = allOk || (round % 3 == 1);
+  if (!announce) return;
+  if (!allOk) {
+    body += "；将在 " + String(AppConst::kCheckinRetrySeconds / 60) + " 分钟后重试";
+  }
+  m_notify->post(allOk ? NotifyKind::CheckinOk : NotifyKind::CheckinFail, body,
+                 m_time->todayString() +
+                     (allOk ? String("/multi")
+                            : String("/multi-fail/") +
+                                  String(static_cast<unsigned>((round - 1) / 3))));
+}
+
+// ---------------------------------------------------------------- 通知
+
+void CommandRouter::handleNotifySet(JsonObjectConst request, int32_t id) {
+  if (m_config == nullptr) {
+    replyError(id, Result::NotReady, "config unavailable");
+    return;
+  }
+  // 没给的字段传 -1 / 空串表示"不改这一项"
+  int enabled = -1;
+  int style = -1;
+  int gap = -1;
+  int quota = -1;
+  if (request["on"].is<bool>()) enabled = request["on"].as<bool>() ? 1 : 0;
+  if (request["style"].is<int>()) style = request["style"].as<int>();
+  if (request["gap"].is<int>()) gap = request["gap"].as<int>();
+  if (request["quota"].is<int>()) quota = request["quota"].as<int>();
+  const String url = request["url"] | "";
+
+  const Result result = m_config->setNotify(enabled, style, url, gap, quota);
+  if (result != Result::Ok) {
+    replyError(id, result, "save notify config failed");
+    return;
+  }
+  replyOk(id, "notify config saved", m_notify != nullptr ? m_notify->statusJson() : String());
+}
+
+void CommandRouter::workNotifyTest(const WorkItem& item) {
+  setBusy(true);
+  String body = String(item.payload);
+  if (body.length() == 0) {
+    body = "这是一条来自打卡器的测试通知";
+    if (m_time != nullptr) body = m_time->nowString() + " " + body;
+  }
+
+  int status = 0;
+  String error;
+  bool sent = false;
+  if (m_notify == nullptr) {
+    error = "notify service unavailable";
+  } else if (!m_notify->active()) {
+    error = "通知未启用或 URL 为空：先执行 notify set url=<推送地址> on=1";
+  } else {
+    sent = m_notify->sendNow(NotifyKind::Info, body, &status, error);
+  }
+  setBusy(false);
+  flashResult(sent);
+
+  char data[192];
+  snprintf(data, sizeof(data), "{\"sent\":%s,\"httpStatus\":%d,\"url\":\"%s\",\"style\":%d}",
+           sent ? "true" : "false", status,
+           m_config != nullptr ? m_config->notifyUrlMasked().c_str() : "",
+           m_config != nullptr ? static_cast<int>(m_config->notifyStyle()) : -1);
+  if (sent) {
+    replyOk(item.requestId, "notification sent: " + body, String(data));
+  } else {
+    replyError(item.requestId, error.length() > 0 ? Result::NetworkError : Result::InternalError,
+               error);
+  }
+}
+
+void CommandRouter::workDeadlineMissed(const WorkItem& item) {
+  (void)item;  // 定时触发，无回执
+  emitEvent("alert", "\"kind\":\"deadline\",\"msg\":\"window closed without success\"");
+  if (m_notify == nullptr || m_time == nullptr) return;
+
+  // 把"最后一次尝试为什么没成功"一起带过去，手机上看一眼就知道要处理什么
+  String reason;
+  if (m_config != nullptr) {
+    JsonDocument doc;
+    const String last = m_config->lastResultJson();
+    if (last.length() > 0 && deserializeJson(doc, last) == DeserializationError::Ok) {
+      reason = doc["msg"] | "";
+      if (doc["ok"].is<bool>() && doc["ok"].as<bool>()) reason = "（记录显示已成功？）" + reason;
+    }
+  }
+  String body = "打卡窗口已关闭（23:30），今天仍未成功。";
+  if (reason.length() > 0) body += "最后原因：" + reason;
+  m_notify->post(NotifyKind::DeadlineMissed, body, m_time->todayString() + "/deadline");
 }

@@ -74,6 +74,12 @@ class CheckinService {
   ///       不清零会导致第 2 个账号之后 30 分钟内无法登录。
   void resetLoginState();
 
+  /// @brief 距最近一次成功登录过了多久（毫秒）；本次开机内没登录过返回 0xFFFFFFFF。
+  /// @note 只给通知摘要用（判断"到 22:00 会话是否还在 TTL 内"），不参与任何业务判定。
+  uint32_t lastLoginAgeMs() const {
+    return m_lastLoginDone ? static_cast<uint32_t>(millis() - m_lastLoginMs) : 0xFFFFFFFFu;
+  }
+
   /// @brief 结果码转字符串。
   static const char* outcomeName(CheckinOutcome outcome);
 

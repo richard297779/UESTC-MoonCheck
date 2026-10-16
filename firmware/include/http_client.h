@@ -32,6 +32,12 @@ struct HttpRequest {
   String body;
   bool followRedirects = false;
   uint32_t timeoutMs = AppConst::kHttpTimeoutMs;
+  /// @brief true=用**公共根证书包**校验（通知类第三方站点），false=校园站点 CA。
+  /// @note 两个证书包互不影响：*.uestc.edu.cn 仍然只用抓包得到的那条链校验，
+  ///       不会因为内置了公网根证书而放宽对平台的校验。
+  bool publicCa = false;
+  /// @brief true=本请求跳过证书校验（等价于全局 tls_mode=0，只对单个请求生效）。
+  bool insecure = false;
 
   /// @brief 追加一个请求头。
   void addHeader(const String& name, const String& value) {
