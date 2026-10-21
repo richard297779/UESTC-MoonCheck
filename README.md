@@ -147,7 +147,7 @@ multi probe                             # 只读演练，不提交
 | [常见问题](docs/faq.md) | 排错速查与已知限制 |
 | [发行说明](release/notes.md) | 版本变化与升级注意 |
 | [自行编译](firmware/README.md) | 用 PlatformIO 从源码构建 |
-| [PC 验证工具](tools/pc_reference/README.md) | 先在电脑上验证链路（可选） |
+| [开发者文档](dev/README.md) | 原理、协议、设计文档与开发工具（想读懂/复刻看这里） |
 
 ---
 

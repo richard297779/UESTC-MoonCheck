@@ -20,7 +20,7 @@
 pio pkg install -g -p "platformio/toolchain-xtensa-esp32"
 ```
 
-> 源码注释里引用的接口契约、抓包记录等设计文档属于内部开发资料，未随本仓库发布，不影响编译。
+> 源码注释里引用的接口契约、抓包记录等设计文档见 [开发者文档](../dev/README.md)，不影响编译。
 
 ---
 

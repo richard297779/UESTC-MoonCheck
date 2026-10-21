@@ -3,7 +3,7 @@
 在动手配设备之前，先用电脑把「登录 → 门户预热 → 打卡」整条链路跑通，
 可以提前发现账号、密码、指纹、坐标的问题，避免反复折腾板子。
 
-> 这里只是**可选的前置验证**。不想用也可以直接按 [快速开始](../../docs/quickstart.md) 配置设备。
+> 这里只是**可选的前置验证**。不想用也可以直接按 [快速开始](../../../docs/quickstart.md) 配置设备。
 
 ---
 
@@ -26,7 +26,7 @@ notepad config.json
 | `student_id` | 学号 |
 | `password` | 统一身份认证密码 |
 | `session_cookie` | 浏览器里 `SESSION` 的值（可选，留空则脚本自己登录） |
-| `browser_fingerprint` | 32 位浏览器指纹（取法见 [快速开始](../../docs/quickstart.md#2-取浏览器指纹)） |
+| `browser_fingerprint` | 32 位浏览器指纹（取法见 [快速开始](../../../docs/quickstart.md#2-取浏览器指纹)） |
 | `lat` / `lng` | 宿舍坐标 |
 
 > 从浏览器 F12 → Application → Cookies → `jzsz.uestc.edu.cn` 可以拿到 `SESSION`。
