@@ -39,17 +39,35 @@ SKIP_SUBSTR = [
     os.path.join('tools', 'pc_reference', 'out'),
     os.path.join('tools', 'check_repo_hygiene.py'),   # 内含作者私有值，绝不外发
     os.path.join('tools', 'extract_burp.ps1'),
+    # 公开副本只收录面向用户的说明文档；以下开发者文档只留在主工程 docs/，
+    # 不允许再被同步回 mooncheck/（曾出现过回灌）。
+    os.path.join('docs', 'api-contract.md'),
+    os.path.join('docs', 'ble-protocol.md'),
+    os.path.join('docs', 'capture-guide.md'),
+    os.path.join('docs', 'firmware-design.md'),
+    os.path.join('docs', 'multi-user-design.md'),
+    os.path.join('docs', 'network-uestc-wifi.md'),
+    os.path.join('docs', 'notify-design.md'),
+    os.path.join('docs', 'python-test-design.md'),
+    os.path.join('docs', 'python-verification-plan.md'),
+    os.path.join('docs', 'release-guide.md'),
+    os.path.join('docs', 'test-plan-checkin-path.md'),
+    os.path.join('docs', 'assets', 'quickstart', 'README.md'),
 ]
 
-# 需要"手工合并"的文件（公开副本已脱敏，直接覆盖会泄露）
+# 需要"手工合并"的文件（公开副本已脱敏或已按用户视角改写，直接覆盖会泄露/冲掉）
 MANUAL_MERGE = [
     'README.md',
     os.path.join('firmware', 'README.md'),
     os.path.join('firmware', 'platformio.ini'),
     os.path.join('firmware', 'src', 'app_config.cpp'),
-    os.path.join('docs', 'api-contract.md'),
-    os.path.join('docs', 'firmware-design.md'),
-    os.path.join('docs', 'python-verification-plan.md'),
+    os.path.join('docs', 'quickstart.md'),
+    os.path.join('docs', 'flashing.md'),
+    os.path.join('docs', 'commands.md'),
+    os.path.join('docs', 'notify.md'),
+    os.path.join('docs', 'multi-account.md'),
+    os.path.join('docs', 'faq.md'),
+    os.path.join('tools', 'pc_reference', 'README.md'),
     os.path.join('tools', 'pc_reference', 'config.example.json'),
     os.path.join('tools', 'pc_reference', 'portal_sequence.json'),
 ]

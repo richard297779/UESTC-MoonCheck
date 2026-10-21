@@ -18,6 +18,8 @@ firmware/.pio/
 .pio/
 .pioenvs/
 .piolibdeps/
+release/
+release.bak-*/
 *.bin
 *.elf
 *.map
