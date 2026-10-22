@@ -17,6 +17,7 @@ mooncheck/
 ├─ README.md            用户入口
 ├─ docs/                用户文档（快速开始 / 刷固件 / 指令 / 通知 …）
 ├─ firmware/            固件源码（PlatformIO）
+├─ desktop/             桌面单文件版源码 + 构建脚本（Windows/Linux）
 ├─ tools/               用户工具：ble_console.py、notify_sink.py …
 ├─ dev/                 ← 你在这里
 │  ├─ docs/             开发文档：协议、设计、验证记录
@@ -38,6 +39,7 @@ mooncheck/
 | [multi-user-design.md](docs/multi-user-design.md) | 多账号表（最多 6 条）与逐个开关的设计 |
 | [notify-design.md](docs/notify-design.md) | 通知通道格式、事件表、限流与失败隔离 |
 | [network-uestc-wifi.md](docs/network-uestc-wifi.md) | 校园网 Portal / 802.1X 的判定与现状 |
+| [desktop-app.md](docs/desktop-app.md) | 桌面单文件版：代码地图、schema、与固件语义的对应 |
 | [release-guide.md](docs/release-guide.md) | 发布者手册：锁版本、merge_bin、GitHub Release 流程 |
 | [screenshots.md](docs/screenshots.md) | 用户文档的配图清单（维护用） |
 
@@ -47,26 +49,26 @@ mooncheck/
 
 | 工具 | 用途 |
 | --- | --- |
-| `tools/analyze_har.py` | 按时间序列出 HAR 全部请求，快速看清链路 |
-| `tools/show_capture_item.py` | 查看单条抓包的结构与请求头（脱敏） |
-| `tools/extract_app_urls.py` | 从 HAR 里挖出「晚安成电」的真实启动地址 |
-| `tools/extract_portal_sequence.py` | 提取「登录后 → 点图标前」的请求序列，生成可回放清单 |
-| `tools/inspect_app_js.py` | 从 JS 响应里找「点击图标」的代码路径 |
-| `tools/compare_cookies.py` | 对比两个域上的 Cookie 名单（只列名字） |
+| `dev/tools/analyze_har.py` | 按时间序列出 HAR 全部请求，快速看清链路 |
+| `dev/tools/show_capture_item.py` | 查看单条抓包的结构与请求头（脱敏） |
+| `dev/tools/extract_app_urls.py` | 从 HAR 里挖出「晚安成电」的真实启动地址 |
+| `dev/tools/extract_portal_sequence.py` | 提取「登录后 → 点图标前」的请求序列，生成可回放清单 |
+| `dev/tools/inspect_app_js.py` | 从 JS 响应里找「点击图标」的代码路径 |
+| `dev/tools/compare_cookies.py` | 对比两个域上的 Cookie 名单（只列名字） |
 
 **TLS / 证书 / 接口试验**
 
 | 工具 | 用途 |
 | --- | --- |
-| `tools/check_tls.js` | 检查目标域名的 TLS 握手与证书链 |
-| `tools/gen_ca_pem.js` | 生成内置信任锚 `public_ca_pem.h` |
-| `tools/gen_public_ca.js` | 生成公开根证书 PEM（供设备校验推送域名） |
-| `tools/verify_public_ca.js` | 用这份 PEM 复验各推送域名的真实握手 |
-| `tools/probe_cas_crypto.js` | 对照 CAS 登录页 JS，验证密码加密算法 |
-| `tools/extract_burp.js` | 从 Burp 导出内容里提取请求 |
-| `tools/fetch_asset.js` | 抓取并保存前端静态资源 |
+| `dev/tools/check_tls.js` | 检查目标域名的 TLS 握手与证书链 |
+| `dev/tools/gen_ca_pem.js` | 生成内置信任锚 `public_ca_pem.h` |
+| `dev/tools/gen_public_ca.js` | 生成公开根证书 PEM（供设备校验推送域名） |
+| `dev/tools/verify_public_ca.js` | 用这份 PEM 复验各推送域名的真实握手 |
+| `dev/tools/probe_cas_crypto.js` | 对照 CAS 登录页 JS，验证密码加密算法 |
+| `dev/tools/extract_burp.js` | 从 Burp 导出内容里提取请求 |
+| `dev/tools/fetch_asset.js` | 抓取并保存前端静态资源 |
 
-**PC 参考实现**（`tools/pc_reference/`，纯标准库 + pycryptodome）
+**PC 参考实现**（`dev/tools/pc_reference/`，纯标准库 + pycryptodome）
 
 | 文件 | 用途 |
 | --- | --- |
@@ -77,7 +79,7 @@ mooncheck/
 | `companion_probe.py` | 用 Playwright 走真实浏览器登录，做对照实验 |
 | `portal_sequence.json` | 已脱敏的门户请求序列（`_t=<SN>`，无 Cookie） |
 
-**发布**：`tools/make_release.bat`（双击）/ `make_release.ps1` —— 读版本号、校验 build 产物、
+**发布**：`dev/tools/make_release.bat`（双击）/ `make_release.ps1` —— 读版本号、校验 build 产物、
 `esptool merge_bin` 打包、生成 sha256、用 `gh` 上传 Release。
 
 **用户工具**在 [`../tools/`](../tools/)：`ble_console.py`（蓝牙配网台）、`notify_sink.py`（局域网通知中转）、
@@ -87,8 +89,8 @@ mooncheck/
 
 1. [快速开始](../docs/quickstart.md) 走一遍，先让设备跑通；
 2. 想知道每一步在干什么 → [api-contract.md](docs/api-contract.md)；
-3. 想自己写一套 PC 实现 → [python-test-design.md](docs/python-test-design.md)，代码看 `tools/pc_reference/`；
-4. 想改固件 → [firmware-design.md](docs/firmware-design.md) + [ble-protocol.md](docs/ble-protocol.md)，编译看 [firmware/README.md](../firmware/README.md)；
+3. 想自己写一套 PC 实现 → [python-test-design.md](docs/python-test-design.md)，代码看 `dev/tools/pc_reference/`；
+4. 想改固件 → [firmware-design.md](docs/firmware-design.md) + [ble-protocol.md](docs/ble-protocol.md)，编译看 [firmware/README.md](../firmware/README.md)；想改桌面版 → [desktop-app.md](docs/desktop-app.md)；
 5. 想抓自己的包复现结论 → [capture-guide.md](docs/capture-guide.md)。
 
 ## 脱敏约定

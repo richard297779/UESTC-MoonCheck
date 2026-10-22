@@ -1,0 +1,39 @@
+{
+  "student_id": "2023XXXXXXXXX",
+  "password": "PUT_YOUR_PASSWORD",
+  "browser_fingerprint": "PUT_32_HEX_FINGERPRINT",
+  "session_cookie": "",
+  "session_saved_at": "",
+  "timeout": 20,
+  "user_agent": "",
+  "location": {
+    "latitude": 30.75498,
+    "longitude": 103.933883,
+    "reverse_geocode": "四川省成都市郫都区",
+    "coordinate_system": "gcj02",
+    "accuracy": 86,
+    "location_duration_ms": 1189,
+    "network_type": "4g"
+  },
+  "schedule": {
+    "checkin_at": "22:00",
+    "window_end": "23:30"
+  },
+  "accounts": [],
+  "notify": {
+    "on": false,
+    "url": "https://sctapi.ftqq.com/PUT_YOUR_SENDKEY.send",
+    "style": 2,
+    "gap": 60,
+    "quota": 40,
+    "channels": [
+      {
+        "label": "roommate",
+        "on": true,
+        "style": 2,
+        "url": "https://sctapi.ftqq.com/PUT_SECOND_SENDKEY.send",
+        "accounts": ["A02"]
+      }
+    ]
+  }
+}

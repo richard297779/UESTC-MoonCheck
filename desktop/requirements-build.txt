@@ -1,0 +1,4 @@
+# 仅构建期依赖；运行 MoonCheck 本身不需要任何第三方包
+pyinstaller>=6.0
+# 可选：交叉验证纯 Python AES 实现（tests/test_offline.py 在有则测、无则跳过）
+pycryptodome

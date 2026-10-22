@@ -6,7 +6,7 @@
 
 /// @brief 固件版本号（与 docs/api-contract.md 的实施进度对应）。
 ///        单人/多人不再是两种构建：账号表里有几条就打几个，因此不再加 -multi 后缀。
-#define FW_VERSION "0.3.1"
+#define FW_VERSION "0.4.0"
 
 /// @brief BLE 协议版本（hello 指令上报）。
 #define FW_PROTO_VERSION 1

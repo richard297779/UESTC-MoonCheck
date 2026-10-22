@@ -1,5 +1,28 @@
 # 发行说明
 
+## v0.4.0
+
+**新功能**
+
+- **多通道通知**：默认通道之外最多再挂 5 条附加通道，每条可关联若干账号——
+  每个人的打卡结果单独推给每个人（`notify add/link/on/off/rm`，详见 [手机通知](../docs/notify.md)）。
+- 多人轮的推送改为「逐账号结果 → 关联通道，整轮汇总 → 默认通道」，去重与配额按通道独立。
+
+**本版本附带的可执行文件**
+
+| 文件 | 给谁用 | 怎么用 |
+| --- | --- | --- |
+| `MoonCheck-1.0.0-windows-x64.exe` | Windows 10/11（无需开发板） | 双击 = 图形界面；带参数 = CLI。首次运行在 exe 同目录生成 `config.json` |
+| `MoonCheck-1.0.0-linux-x86_64` | x86-64 Linux（无需开发板） | `chmod +x` 后直接运行，用法同上 |
+| `wanan-0.4.0-s3-n16r8-merged.bin` | ESP32-S3 板 | 刷 `0x0`（整片重置，会清配置） |
+| `wanan-0.4.0-wroom32-4mb-merged.bin` | ESP32-WROOM-32 板 | 刷 `0x0`（同上） |
+
+桌面版（多账号、打卡时间窗、按人推送与固件同语义）使用说明见 **[桌面版](../desktop/README.md)**；
+固件版刷写与配置见 **[刷固件](../docs/flashing.md)** 与 **[快速开始](../docs/quickstart.md)**。
+只想升级旧固件、不想丢配置：用对应 `-full.zip` 里的 `firmware.bin` 刷 `0x10000`。
+
+---
+
 ## v0.3.1
 
 - 修复 Server酱通知正文为空（正文键为 `desp`）
@@ -8,14 +31,14 @@
 
 ---
 
-## 下载哪个文件
+## 下载哪个文件（固件）
 
 先看芯片丝印：
 
 | 芯片 | 选择 |
 | --- | --- |
-| **ESP32-S3**（N16R8，16 MB） | `wanan-0.3.1-s3-n16r8-merged.bin` |
-| **ESP32**（WROOM-32，4 MB） | `wanan-0.3.1-wroom32-4mb-merged.bin` |
+| **ESP32-S3**（N16R8，16 MB） | `wanan-0.4.0-s3-n16r8-merged.bin` |
+| **ESP32**（WROOM-32，4 MB） | `wanan-0.4.0-wroom32-4mb-merged.bin` |
 
 只想升级、不想丢配置？下载对应的 `-full.zip`，只刷里面的 `firmware.bin` 到 `0x10000`。
 
@@ -50,7 +73,9 @@
 - 文件校验值见同目录 `sha256.txt`
 - 构建环境：PlatformIO Core 6.2.0 / platform espressif32 7.1.3 / Arduino-ESP32 4.2.17 /
   esptool 4.11.0 / NimBLE-Arduino 2.5.1 / ArduinoJson 7.4.3
-- 从源码编译见 **[自行编译](../firmware/README.md)**
+- 桌面版构建：PyInstaller 单文件（Windows/Linux 各自平台构建；运行时零第三方依赖，
+  打包环境 conda `mooncheck-desktop`，Python 3.12 + PyInstaller 6.22）
+- 从源码编译见 **[自行编译](../firmware/README.md)**；桌面版从源码构建见 **[桌面版](../desktop/README.md)** 第 5 节
 
 ---
 

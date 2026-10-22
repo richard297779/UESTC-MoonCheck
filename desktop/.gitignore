@@ -1,0 +1,8 @@
+# 桌面版构建产物与本地配置（真实凭据绝不入库）
+build/
+dist/
+.venv/
+__pycache__/
+*.pyc
+config.json
+mooncheck-config*.json

@@ -126,11 +126,16 @@ auto on
 
 | 命令 | 说明 |
 | --- | --- |
-| `notify set url=<地址> [style=0\|1\|2] [on=1] [gap=秒] [quota=条]` | 配置通知 |
-| `notify test [文本]` | 立即发送一条测试消息（不入队） |
+| `notify set url=<地址> [style=0\|1\|2] [on=1] [gap=秒] [quota=条]` | 配置默认通道（收全部事件） |
+| `notify add <标签> url=<地址> [style=..] [on=1] [accounts=A01,A02\|all]` | 新增附加通道（0.4.0 起，最多 5 条） |
+| `notify rm <标签>` / `notify on <标签>` / `notify off <标签>` | 删除 / 启用 / 停用某条附加通道 |
+| `notify link <标签> <A01,A02\|all>` | 改通道关联的账号（只收这些账号的结果） |
+| `notify test [chan=<标签>] [文本]` | 立即发送一条测试消息（不入队；默认走默认通道） |
+| `notify` | 列出所有通道与今日已发数 |
 
 `style`：`0` = GET 模板（Bark）、`1` = 纯文本（ntfy）、`2` = JSON（Server酱 / 中转）。
 
+多人模式下：逐账号结果推给**关联该账号**的通道，整轮汇总只走默认通道。
 详见 **[手机通知](notify.md)**。
 
 ---
@@ -149,9 +154,13 @@ auto on
 | `loc.set` | `lat`, `lng`, `addr` | 坐标 |
 | `sched.set` | `at`, `window_end`, `jitter_s` | 调度 |
 | `auto.set` | `enabled` | 自动打卡开关 |
-| `notify.set` | `url`, `style`, `on`, `gap`, `quota` | 通知 |
-| `notify.status` | — | 通知状态 |
-| `test.notify` | `body` | 立即发一条 |
+| `notify.set` | `url`, `style`, `on`, `gap`, `quota` | 默认通道 |
+| `notify.add` | `label`, `url`, `style?`, `on?`, `accounts?` | 附加通道（≤5 条，0.4.0 起；`accounts` 数组或逗号串，缺省=all） |
+| `notify.remove` | `label` | 删除附加通道 |
+| `notify.enable` | `label`, `on` | 附加通道开关 |
+| `notify.link` | `label`, `accounts` | 改关联账号 |
+| `notify.status` | — | 通知状态（含 `channels` 列表与每通道今日已发） |
+| `test.notify` | `body`, `chan?` | 立即发一条（`chan` 定向附加通道） |
 | `account.add` | `label`, `user`, `pass`, `bfp`, `lat`, `lng`, `addr` | 添加账号 |
 | `account.list` | — | 账号表 |
 | `account.remove` | `label` | 删除账号 |

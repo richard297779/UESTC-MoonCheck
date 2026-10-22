@@ -65,6 +65,22 @@ multi probe force # 组合使用
 
 ---
 
+## 每个人的结果推给每个人（0.4.0 起）
+
+给每个账号配一条**只关联他**的推送通道，他的手机上只出现他自己的结果：
+
+```text
+notify add A02url url=https://sctapi.ftqq.com/<小王的SendKey>.send style=2 accounts=A02
+notify add A03url url=https://api.day.app/<小赵的BarkKey>/{title}/{body} style=0 accounts=A03
+```
+
+- `accounts=` 里写标签，逗号分隔可多选；写 `all` 表示收所有账号的结果。
+- 默认那条 `notify set` 的通道收**全局事件 + 整轮汇总**（谁都没配自己通道时，结果都在它上面）。
+- 每人一天只推一条「打卡成功」；失败按每 3 轮一条的节奏，不会刷屏。
+- 详见 **[手机通知](notify.md)**；桌面版（`desktop/`）通知规则与这里完全一致。
+
+---
+
 ## 时间预算
 
 每个账号要经历登录 + 门户预热 + 打卡 + 复查，大约 20–60 秒。

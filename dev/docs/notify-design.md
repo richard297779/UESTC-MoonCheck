@@ -71,6 +71,23 @@ BLE 镜像保留是为了调试方便，**不承担送达责任**。
 指令：`notify`（查配置+今日已发+队列）、`notify set url=… [style=…] [on=0|1] [gap=秒] [quota=条]`、
 `notify test [文本]`（**同步立即发**，不入队、不受去重与配额限制——用它验证通道）。
 
+### 3.1 多通道（0.4.0 起）
+
+单通道只能「一台设备 → 一个手机」。多人场景需要**每个人的结果推到每个人自己**，
+于是引入通道表：默认通道 1 条（就是上表 `n_*` 键）+ 附加通道最多 5 条。
+
+| 项 | 载体 | 说明 |
+|---|---|---|
+| 附加通道表 | NVS 键 `n_chans`（JSON 数组 `[{l,u,s,en,a}]`） | l=label（同账号标签规则 ≤12 字符）、u=url、s=style、en=enabled、a=`accounts` 逗号串或 `all`；`factoryReset` 随 `clear()` 一起清除 |
+| 通道索引 | `uint8_t channel` | `0`＝默认通道，`1..5`＝表内元素+1；`NotifyItem.channel` 随队列条目走，`render/deliver` 按索引解析 url/style |
+| 路由 | `NotifyTarget {All, DefaultOnly, AccountOnly}` | 全局事件（摘要/断网/窗口）与单账号动作＝`All`（默认+命中账号的附加）；多人轮汇总＝`DefaultOnly`；多人轮逐账号结果＝`AccountOnly`（只进关联通道，`all` 通道收所有账号但**不收汇总**，避免重复） |
+| 去重/配额 | 键加 `c<idx>\|` 前缀；`m_sentTodayCh[6]` | 每通道独立计数；`quota` 旋钮仍共用 `n_quota` |
+| 事件镜像 | `evt.notify` 每事件镜像一次 | 载荷带 `account` 字段（空=全局） |
+
+指令：`notify add <标签> url=… [style=…] [on=…] [accounts=A01,A02|all]`、`notify rm/on/off <标签>`、
+`notify link <标签> <csv|all>`、`notify test [chan=标签] [文本]`；`notify.status` 回执带 `channels[]`
+（url 一律脱敏）。桌面版 `push.fan_out` 与这套规则逐条对齐（skip_default/only_default ↔ AccountOnly/DefaultOnly）。
+
 ---
 
 ## 4. 事件表

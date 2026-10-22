@@ -8,7 +8,9 @@
   双击同目录的 make_release.bat 即可运行。它只做四件事：
     1. 从 firmware/include/app_version.h 自动读取版本号（FW_VERSION）
     2. 校验 firmware/.pio/build/<env>/ 里已有的 build 产物（缺了就报错，不会替你编译）
-    3. 用 esptool merge_bin 生成两个型号的出厂合并镜像 + 两个四文件全量 zip + sha256.txt + notes.md
+    3. 用 esptool merge_bin 生成两个型号的出厂合并镜像 + 两个四文件全量 zip + sha256.txt + notes.md；
+   若项目根下有 desktop/，同时附带桌面版 MoonCheck 可执行文件（Windows exe + Linux 二进制）；
+   Release 正文写到 notes-<版本>.md，不覆盖仓库自带的 notes.md 发行史
     4. 用 gh 自动创建/更新 GitHub Release 并上传全部资产（没有 gh 时打印手动上传指引）
 
   可选参数（双击一般不需要）：
@@ -25,6 +27,7 @@ param(
     [switch]$NoUpload,
     [switch]$Prerelease,
     [switch]$AllowStale,
+    [switch]$SkipDesktop,
     [string]$Repo = '',
     [string]$Only = ''
 )
@@ -59,8 +62,17 @@ if ($env:WANAN_RELEASE_ROOT) {
     if ($item) { $Base = $item.FullName }
 }
 if (-not $Base) { $Base = Split-Path -Parent $PSScriptRoot }
+# 脚本可能位于 <项目>/tools/（主工程）或 <项目>/dev/tools/（公开副本）；
+# 找不到 firmware 目录就向上逐级查找（最多 3 级）。
+$tries = 0
+while ($tries -lt 3 -and -not (Test-Path -LiteralPath (Join-Path $Base 'firmware'))) {
+    $up = Split-Path -Parent $Base
+    if (-not $up -or $up -eq $Base) { break }
+    $Base = $up
+    $tries += 1
+}
 if (-not (Test-Path -LiteralPath (Join-Path $Base 'firmware'))) {
-    Fail "在 $Base 没找到 firmware 目录。这个脚本必须放在 <项目>/tools/ 下运行。"
+    Fail "在 $Base 没找到 firmware 目录。这个脚本必须放在 <项目>/tools/ 或 <项目>/dev/tools/ 下运行。"
 }
 Set-Location -LiteralPath $Base
 Info "项目根目录：$Base"
@@ -109,6 +121,28 @@ if ($ver -notmatch '^[0-9]+\.[0-9]+[0-9A-Za-z.\-]*$') {
 }
 $tag = 'v' + $ver
 Info "固件版本：$ver   （tag: $tag，来源 app_version.h）"
+
+# ---- 桌面单文件版（可选资产：项目根下有 desktop/ 才打包） ----
+$Desk = Join-Path $Base 'desktop'
+$dver = ''
+$deskWin = $null
+$deskLinux = $null
+if ($SkipDesktop) {
+    Info '已按 -SkipDesktop 跳过桌面版可执行文件'
+    $Desk = $null
+} elseif (-not (Test-Path -LiteralPath (Join-Path $Desk 'mooncheck.spec'))) {
+    Warn "在 $Base 下没有 desktop/（主工程没有桌面版），本次只发固件产物"
+    $Desk = $null
+} else {
+    foreach ($ln in (Get-Content -LiteralPath (Join-Path $Desk 'src\mooncheck_app\__init__.py'))) {
+        if ($ln -match "__version__\s*=\s*'([^']+)'") { $dver = $Matches[1]; break }
+    }
+    if (-not $dver) { Fail '读不到 desktop\src\mooncheck_app\__init__.py 里的 __version__' }
+    $deskWin = Join-Path $Desk 'dist\windows\MoonCheck.exe'
+    $deskLinux = Join-Path $Desk 'dist\linux\MoonCheck'
+    Info ("桌面版：v$dver（将随本次 Release 附带 Windows/Linux 两个可执行文件）")
+}
+$relTitle = if ($Desk) { "MoonCheck $ver（免编译刷写 + 桌面版）" } else { "MoonCheck $ver（免编译刷写版）" }
 
 # ---- esptool / python / boot_app0 ----
 $pioHome = Join-Path $env:USERPROFILE '.platformio'
@@ -261,24 +295,25 @@ if ($plan.Count -eq 0) {
     Fail ("-Only '{0}' 没匹配到任何型号（可选 s3 / wroom32），没有要打包的东西" -f $Only)
 }
 
-Step "第 2 步：准备 release\ 目录"
+Step "第 2 步：准备 release\ 目录（增量打包：保留历史版本产物）"
 
 $Rel = Join-Path $Base 'release'
-if (Test-Path -LiteralPath $Rel) {
-    # 只认「本脚本会生成的东西」：顶层 wanan-* / sha256.txt / notes.md，以及子目录 <key>-full（临时暂存）
-    $foreign = @(Get-ChildItem -LiteralPath $Rel -File |
-        Where-Object { ($_.Name -notmatch '^wanan-') -and ($_.Name -ne 'sha256.txt') -and ($_.Name -ne 'notes.md') })
-    $foreign += @(Get-ChildItem -LiteralPath $Rel -Directory | Where-Object { $_.Name -notmatch '-full$' })
-    if ($foreign.Count -gt 0) {
-        $bak = $Rel + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
-        Move-Item -LiteralPath $Rel -Destination $bak
-        Warn "release\ 内有非本脚本生成的文件，已整体移到 $bak"
-    } else {
-        Remove-Item -Recurse -Force -LiteralPath $Rel
+if (-not (Test-Path -LiteralPath $Rel)) {
+    New-Item -ItemType Directory -Path $Rel | Out-Null
+}
+# release/ 里有已入库（git 追踪）的历史发行产物；这里只清理**本次版本**的文件和临时解包目录，
+# 绝不整体删除，避免打包一次就把上一版从工作区里抹掉。
+foreach ($f in @(Get-ChildItem -LiteralPath $Rel -File -ErrorAction SilentlyContinue)) {
+    if (($f.Name -match ('^wanan-' + [regex]::Escape($ver) + '-')) -or
+        ($dver -and ($f.Name -match ('^MoonCheck-' + [regex]::Escape($dver) + '-'))) -or
+        ($f.Name -eq 'sha256.txt') -or ($f.Name -eq ('notes-' + $ver + '.md'))) {
+        Remove-Item -LiteralPath $f.FullName -Force
     }
 }
-New-Item -ItemType Directory -Path $Rel | Out-Null
-Info "输出目录：$Rel"
+foreach ($d in @(Get-ChildItem -LiteralPath $Rel -Directory -ErrorAction SilentlyContinue)) {
+    if ($d.Name -match '-full$') { Remove-Item -LiteralPath $d.FullName -Recurse -Force }
+}
+Info "输出目录：$Rel（历史版本保留，只重建 $ver 的产物）"
 
 Step '第 3 步：生成发行资产（合并镜像 + 全量 zip + 校验和）'
 
@@ -342,10 +377,48 @@ foreach ($p in $plan) {
         $ver, $t.Key, (Human (FileSize $zip)), $t.Name)
 }
 
+# ---- 桌面版可执行文件：检查新鲜度后拷进 release\ ----
+if ($Desk) {
+    foreach ($b in @($deskWin, $deskLinux)) {
+        if (-not (Test-Path -LiteralPath $b)) {
+            Fail ("缺少桌面版可执行文件：$b`n      请先构建：`n        Windows：cd desktop && conda run -n mooncheck-desktop python -m PyInstaller --clean --noconfirm --distpath dist\windows mooncheck.spec`n        Linux：在 WSL 里 cd desktop && bash build_linux.sh`n      确认不要桌面版，则加 -SkipDesktop")
+        }
+    }
+    $deskSrcNewest = Get-ChildItem -Path (Join-Path $Desk 'src') -Recurse -File -Include *.py -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $specFile = Join-Path $Desk 'mooncheck.spec'
+    if ($deskSrcNewest -and (Test-Path -LiteralPath $specFile) -and
+        ((Get-Item -LiteralPath $specFile).LastWriteTime -gt $deskSrcNewest.LastWriteTime)) {
+        $deskSrcNewest = Get-Item -LiteralPath $specFile
+    }
+    if ($deskSrcNewest) {
+        foreach ($b in @($deskWin, $deskLinux)) {
+            if ($deskSrcNewest.LastWriteTime -gt (Get-Item -LiteralPath $b).LastWriteTime) {
+                if ($AllowStale) { Warn ("桌面源码（$($deskSrcNewest.Name)）比可执行文件 $b 新 —— 已用 -AllowStale 强制继续") }
+                else { Fail ("桌面源码 $($deskSrcNewest.Name)（改动于 $($deskSrcNewest.LastWriteTime)）比可执行文件 $b 新。`n      发出去的就是旧桌面版。请先重建两个可执行文件（命令见上），确认要硬发再加 -AllowStale") }
+            }
+        }
+    }
+    $dw = Join-Path $Rel ('MoonCheck-' + $dver + '-windows-x64.exe')
+    $dl = Join-Path $Rel ('MoonCheck-' + $dver + '-linux-x86_64')
+    Copy-Item -LiteralPath $deskWin -Destination $dw -Force
+    Copy-Item -LiteralPath $deskLinux -Destination $dl -Force
+    $assets += $dw
+    $assets += $dl
+    $rows += ('| MoonCheck-{0}-windows-x64.exe | {1} | Windows 10/11 x64 | 双击 = 图形界面；命令行子命令 = CLI |' -f `
+        $dver, (Human (FileSize $dw)))
+    $rows += ('| MoonCheck-{0}-linux-x86_64 | {1} | x86-64 Linux | 下载后 `chmod +x` 再运行 |' -f `
+        $dver, (Human (FileSize $dl)))
+    Info ("桌面版已入包：{0} / {1}" -f (Split-Path -Leaf $dw), (Split-Path -Leaf $dl))
+}
+
 Step '第 4 步：SHA256 与 Release 正文'
 
 $hashLines = Get-ChildItem -LiteralPath $Rel -File |
-    Where-Object { ($_.Extension -eq '.bin') -or ($_.Extension -eq '.zip') } |
+    Where-Object {
+        (($_.Extension -in @('.bin', '.zip')) -and ($_.Name -match ('^wanan-' + [regex]::Escape($ver) + '-'))) -or
+        ($dver -and ($_.Name -match ('^MoonCheck-' + [regex]::Escape($dver) + '-')))
+    } |
     Sort-Object Name |
     ForEach-Object {
         $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLower()
@@ -374,6 +447,19 @@ foreach ($p in $plan) {
     }
 }
 $chipBlock = ($chipLines -join "`r`n")
+$deskNotesBlock = ''
+if ($Desk) {
+    $deskNotesBlock = @(
+        '### 桌面版（不需要开发板，电脑上直接跑）',
+        '',
+        ('- `MoonCheck-{0}-windows-x64.exe` —— Windows 10/11 64-bit：双击 = 图形界面；带命令行参数 = CLI。首次运行在 exe 同目录生成 `config.json`' -f $dver),
+        ('- `MoonCheck-{0}-linux-x86_64` —— x86-64 Linux：下载后先 `chmod +x MoonCheck-{0}-linux-x86_64`，用法与 Windows 版一致' -f $dver),
+        '- 多账号、打卡时间窗、每人独立推送与固件同语义；使用说明见仓库 `desktop/README.md`',
+        ''
+    ) -join "`r`n"
+}
+$deskBuildLine = ''
+if ($Desk) { $deskBuildLine = ('- 桌面版：v{0}（PyInstaller 单文件，Windows/Linux 各自平台构建后随包发布）' -f $dver) }
 $notesLines = @(
     '## 免编译刷写（不用装任何工具）'
     ''
@@ -384,13 +470,13 @@ $notesLines = @(
     '### 刷入步骤'
     ''
     '1. 用 **Chrome / Edge**（必须支持 Web Serial）打开 <https://espressif.github.io/esptool-js/>'
-    '2. Connect 选中串口，Baudrate 保持 `115200`'
+    '2. Connect 选中串口，Baudrate 先用 `921600`（卡住或报错就退回 `115200`）'
     '3. Flash Address 填 `0x0`，文件选上面那个 `-merged.bin`'
     '4. Program，等到日志出现 `Hash of data verified` 就已经写好了'
     '5. **如果停在** `Hard resetting via RTS pin...`：点 **Disconnect**（或直接关掉这个网页），再按板上 RST / 拔插 USB。'
     '   这是网页工具的收尾问题，不是刷写失败；USB 桥占着串口的 RTS 会把 EN 一直拉低，此时按 RST 是没反应的。'
     '6. 第一次开机是**未配置**状态：合并包会擦掉 NVS。蓝牙会广播 `WANAN-XXXX`（XXXX = 蓝牙 MAC 后两字节），LED 慢闪。'
-    '   用手机 nRF Connect 或本仓库 `tools/ble_console.py` 连上，按 docs/release-guide.md 第 7 节配 8 项。'
+    '   用手机 nRF Connect 或本仓库 `tools/ble_console.py` 连上，按 docs/quickstart.md 配齐（刷写细节见 docs/flashing.md）。'
     ''
     '### 本版本资产'
     ''
@@ -403,6 +489,7 @@ $notesLines = @(
     '下载 `-full.zip`，**只**把里面的 `firmware.bin` 填到地址 `0x10000` 刷入 —— WiFi、账号、坐标、日程都会保留。'
     '刷 `0x0` 的合并包等于整片重置，配置会全部丢失。'
     ''
+    $deskNotesBlock
     '### SHA256'
     ''
     '```'
@@ -412,16 +499,17 @@ $notesLines = @(
     '### 本次构建信息'
     ''
     ('- 固件版本：`' + $ver + '`（取自 `firmware/include/app_version.h` 的 `FW_VERSION`，由打包脚本自动读取）')
-    '- 打包方式：`tools/make_release.ps1`（**只消费已有 build 产物，不重新编译**）'
-    '- 已知工具链：PlatformIO Core 7.1.3 / Arduino ESP32 3.x / esptool 4.11.0 / NimBLE-Arduino 2.5.1 / ArduinoJson 7.4.3'
-    '- 详细图文说明：docs/release-guide.md'
+    '- 打包方式：`make_release.ps1`（主工程 `tools/`，公开副本 `dev/tools/`；**只消费已有 build 产物，不重新编译**）'
+    $deskBuildLine
+    '- 已知工具链：platform espressif32@7.1.3 / PlatformIO Core 6.2.0 / esptool 4.11.0 / NimBLE-Arduino 2.5.1 / ArduinoJson 7.4.3'
+    '- 详细图文说明：docs/flashing.md（网页刷写）与 docs/quickstart.md（蓝牙配置）'
     ''
     '> 打卡时间窗 21:00-23:30，登录只在窗口内发生；配置完成后 `auto on` 才会每天自动执行。'
 )
 $notes = ($notesLines -join "`r`n")
-$notesFile = Join-Path $Rel 'notes.md'
+$notesFile = Join-Path $Rel ('notes-' + $ver + '.md')
 $notes | Set-Content -LiteralPath $notesFile -Encoding utf8
-Info "Release 正文：$notesFile"
+Info "Release 正文：$notesFile（仓库自带的 notes.md 发行史不受影响）"
 
 Step '第 5 步：上传 GitHub Release'
 
@@ -429,7 +517,7 @@ $uploadFiles = $assets + @($shaFile)
 
 if ($NoUpload) {
     Info '已按 -NoUpload 跳过上传。手动上传：'
-    Info ('  gh release create ' + $tag + ' --title "MoonCheck ' + $ver + '（免编译刷写版）" --notes-file ' + $notesFile)
+    Info ('  gh release create ' + $tag + ' --title "' + $relTitle + '" --notes-file ' + $notesFile)
     Info ('  cd 到仓库目录后逐个把这些文件拖进 Release 页面：')
     foreach ($f in $uploadFiles) { Info ('    ' + $f) }
     Write-Host ''
@@ -496,7 +584,7 @@ try {
             & git push origin $tag *> $null
             if ($LASTEXITCODE -ne 0) { Warn "git push origin $tag 失败（离线或无权限）；gh 会自行创建远端 tag" }
         }
-        $createArgs = @('release', 'create', $tag, '--title', ("MoonCheck $ver（免编译刷写版）"), '--notes-file', $notesFile)
+        $createArgs = @('release', 'create', $tag, '--title', $relTitle, '--notes-file', $notesFile)
         if ($Prerelease) { $createArgs += '--prerelease' }
         if ($Repo) { $createArgs = @('-R', $Repo) + $createArgs }
         Info ("创建 Release $tag 并上传 {0} 个资产" -f $uploadFiles.Count)

@@ -6,6 +6,8 @@
 
 #include <esp_mac.h>
 
+#include <ArduinoJson.h>
+
 #include "account_store.h"
 #include "app_version.h"
 #include "logger.h"
@@ -41,6 +43,7 @@ constexpr const char* kNvsNotifyStyle = "n_style";
 constexpr const char* kNvsNotifyUrl = "n_url";
 constexpr const char* kNvsNotifyGap = "n_gap";
 constexpr const char* kNvsNotifyQuota = "n_quota";
+constexpr const char* kNvsNotifyChannels = "n_chans";
 
 /// @brief 默认坐标：平台公布的打卡点中心（半径 130 m，距离 0 m，天然在范围内）。
 /// @note 仅作兜底的默认值。请在蓝牙配网时用 loc.set 写入**你自己宿舍的实测坐标**
@@ -59,6 +62,34 @@ bool deviceLabelOk(const String& text) {
     if (!ok) return false;
   }
   return true;
+}
+
+/// @brief 通道标签：同账号标签字符集，但不允许空。
+bool channelLabelOk(const String& text) {
+  return text.length() > 0 && deviceLabelOk(text);
+}
+
+/// @brief 规范化通道关联账号："all"（或空）= 全部；否则逗号分隔的合法标签列表。非法返回 false。
+bool normalizeAccountsCsv(const String& in, String& out) {
+  String s = in;
+  s.trim();
+  if (s.length() == 0 || s.equalsIgnoreCase("all")) {
+    out = "all";
+    return true;
+  }
+  out = "";
+  int start = 0;
+  while (true) {
+    const int comma = s.indexOf(',', start);
+    String token = comma < 0 ? s.substring(start) : s.substring(start, comma);
+    token.trim();
+    if (token.length() == 0 || !deviceLabelOk(token)) return false;
+    if (out.length() > 0) out += ",";
+    out += token;
+    if (comma < 0) break;
+    start = comma + 1;
+  }
+  return out.length() > 0;
 }
 
 /// @brief 把 "HH:MM" 解析为自 00:00 起的分钟数；非法返回 -1。
@@ -112,6 +143,28 @@ Result AppConfig::loadAll() {
   m_notifyUrl = getStringSafe(m_prefs, kNvsNotifyUrl, "");
   m_notifyGapSeconds = static_cast<uint16_t>(m_prefs.getUShort(kNvsNotifyGap, 60));
   m_notifyDailyQuota = static_cast<uint8_t>(m_prefs.getUChar(kNvsNotifyQuota, 40));
+
+  // ---- 额外通知通道（n_chans：JSON [{l,u,s,en,a}]；loadAll 只在持锁上下文调用）----
+  m_notifyChannels.clear();
+  const String chansJson = getStringSafe(m_prefs, kNvsNotifyChannels, "");
+  if (chansJson.length() > 0) {
+    JsonDocument doc;
+    if (!deserializeJson(doc, chansJson)) {
+      for (JsonObject o : doc.as<JsonArray>()) {
+        NotifyChannel ch;
+        ch.label = o["l"] | "";
+        ch.url = o["u"] | "";
+        ch.style = static_cast<uint8_t>(o["s"] | 0);
+        ch.enabled = o["en"] | true;
+        ch.accountsCsv = o["a"] | "all";
+        if (!channelLabelOk(ch.label) || ch.url.length() <= 6 || ch.style >= 3) continue;
+        if (m_notifyChannels.size() >= AppConfig::kMaxExtraChannels) break;
+        m_notifyChannels.push_back(ch);
+      }
+    } else {
+      LOG_W(kTag, "n_chans json broken, channels ignored");
+    }
+  }
 
   // ---- 账号 ----
   m_auth.studentId = getStringSafe(m_prefs, kNvsAuthUser, "");
@@ -402,14 +455,178 @@ Result AppConfig::setNotify(int enabled, int style, const String& url, int gap, 
 }
 
 String AppConfig::notifyUrlMasked() const {
-  if (m_notifyUrl.length() == 0) return String("<unset>");
-  const int schemeEnd = m_notifyUrl.indexOf("://");
+  return maskUrl(m_notifyUrl);
+}
+
+String AppConfig::maskUrl(const String& url) {
+  if (url.length() == 0) return String("<unset>");
+  const int schemeEnd = url.indexOf("://");
   const int hostStart = (schemeEnd < 0) ? 0 : schemeEnd + 3;
-  int pathStart = m_notifyUrl.indexOf('/', hostStart);
-  if (pathStart < 0) pathStart = m_notifyUrl.indexOf('?', hostStart);
-  if (pathStart < 0) pathStart = m_notifyUrl.length();
-  const String head = m_notifyUrl.substring(0, pathStart);  // scheme + host(+port)，不含路径与 token
-  return head + "/***(len=" + String(m_notifyUrl.length()) + ")";
+  int pathStart = url.indexOf('/', hostStart);
+  if (pathStart < 0) pathStart = url.indexOf('?', hostStart);
+  if (pathStart < 0) pathStart = url.length();
+  const String head = url.substring(0, pathStart);  // scheme + host(+port)，不含路径与 token
+  return head + "/***(len=" + String(url.length()) + ")";
+}
+
+int AppConfig::notifyChannelIndexByLabel(const String& label) const {
+  for (size_t i = 0; i < m_notifyChannels.size(); i++) {
+    if (m_notifyChannels[i].label == label) return static_cast<int>(i);
+  }
+  return -1;
+}
+
+bool AppConfig::notifyChannelMatchesAccount(size_t idx, const String& account) const {
+  if (idx >= m_notifyChannels.size()) return false;
+  const NotifyChannel& ch = m_notifyChannels[idx];
+  if (ch.accountsCsv == "all") return true;
+  if (account.length() == 0) return false;  // 全局事件只进 "all" 通道
+  int start = 0;
+  while (true) {
+    const int comma = ch.accountsCsv.indexOf(',', start);
+    const String token = comma < 0 ? ch.accountsCsv.substring(start) : ch.accountsCsv.substring(start, comma);
+    if (token == account) return true;
+    if (comma < 0) break;
+    start = comma + 1;
+  }
+  return false;
+}
+
+bool AppConfig::hasActiveExtraChannel() const {
+  for (size_t i = 0; i < m_notifyChannels.size(); i++) {
+    if (m_notifyChannels[i].enabled && m_notifyChannels[i].url.length() > 0) return true;
+  }
+  return false;
+}
+
+Result AppConfig::persistNotifyChannels() {
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (size_t i = 0; i < m_notifyChannels.size(); i++) {
+    const NotifyChannel& ch = m_notifyChannels[i];
+    JsonObject o = arr.add<JsonObject>();
+    o["l"] = ch.label;
+    o["u"] = ch.url;
+    o["s"] = ch.style;
+    o["en"] = ch.enabled;
+    o["a"] = ch.accountsCsv;
+  }
+  String json;
+  serializeJson(doc, json);
+  return persistString(kNvsNotifyChannels, json);
+}
+
+Result AppConfig::addOrUpdateNotifyChannel(const String& label, const String& url, int style,
+                                           int on, const String& accountsCsv) {
+  if (!channelLabelOk(label)) return Result::InvalidParam;
+  if (style < 0 || style >= 3) return Result::InvalidParam;
+  String normalized;
+  if (!normalizeAccountsCsv(accountsCsv, normalized)) return Result::InvalidParam;
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  Result result = Result::Ok;
+  const int existing = notifyChannelIndexByLabel(label);
+  if (existing >= 0) {
+    NotifyChannel& ch = m_notifyChannels[existing];
+    if (url.length() > 0) {
+      if (url.length() <= 6) {
+        result = Result::InvalidParam;  // 明显不是完整 URL
+      } else {
+        ch.url = url;
+      }
+    }
+    if (result == Result::Ok) {
+      ch.style = static_cast<uint8_t>(style);
+      if (on >= 0) ch.enabled = (on != 0);
+      ch.accountsCsv = normalized;
+      result = persistNotifyChannels();
+    }
+  } else {
+    if (url.length() <= 6) result = Result::InvalidParam;
+    if (result == Result::Ok && m_notifyChannels.size() >= kMaxExtraChannels) {
+      result = Result::InvalidParam;  // 通道已满（最多 5 条额外通道）
+    }
+    if (result == Result::Ok) {
+      NotifyChannel ch;
+      ch.label = label;
+      ch.url = url;
+      ch.style = static_cast<uint8_t>(style);
+      ch.enabled = (on < 0) ? true : (on != 0);
+      ch.accountsCsv = normalized;
+      m_notifyChannels.push_back(ch);
+      result = persistNotifyChannels();
+      if (result != Result::Ok) m_notifyChannels.pop_back();
+    }
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  LOG_I(kTag, "notify chan '%s': style=%d on=%d accounts=%s url=%s", label.c_str(), style, on,
+        normalized.c_str(), maskUrl(url).c_str());
+  return result;
+}
+
+Result AppConfig::removeNotifyChannel(const String& label) {
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const int idx = notifyChannelIndexByLabel(label);
+  Result result;
+  if (idx < 0) {
+    result = Result::InvalidParam;
+  } else {
+    m_notifyChannels.erase(m_notifyChannels.begin() + idx);
+    result = persistNotifyChannels();
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  if (result == Result::Ok) LOG_I(kTag, "notify chan '%s' removed", label.c_str());
+  return result;
+}
+
+Result AppConfig::setNotifyChannelEnabled(const String& label, bool on) {
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const int idx = notifyChannelIndexByLabel(label);
+  Result result;
+  if (idx < 0) {
+    result = Result::InvalidParam;
+  } else {
+    m_notifyChannels[idx].enabled = on;
+    result = persistNotifyChannels();
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  if (result == Result::Ok) LOG_I(kTag, "notify chan '%s' = %s", label.c_str(), on ? "on" : "off");
+  return result;
+}
+
+Result AppConfig::linkNotifyChannel(const String& label, const String& accountsCsv) {
+  String normalized;
+  if (!normalizeAccountsCsv(accountsCsv, normalized)) return Result::InvalidParam;
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const int idx = notifyChannelIndexByLabel(label);
+  Result result;
+  if (idx < 0) {
+    result = Result::InvalidParam;
+  } else {
+    m_notifyChannels[idx].accountsCsv = normalized;
+    result = persistNotifyChannels();
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  if (result == Result::Ok) {
+    LOG_I(kTag, "notify chan '%s' linked to %s", label.c_str(), normalized.c_str());
+  }
+  return result;
+}
+
+String AppConfig::notifyChannelsJson() const {
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (size_t i = 0; i < m_notifyChannels.size(); i++) {
+    const NotifyChannel& ch = m_notifyChannels[i];
+    JsonObject o = arr.add<JsonObject>();
+    o["label"] = ch.label;
+    o["on"] = ch.enabled;
+    o["style"] = ch.style == 0 ? "get" : (ch.style == 1 ? "post_text" : "post_json");
+    o["url"] = maskUrl(ch.url);
+    o["accounts"] = ch.accountsCsv;
+  }
+  String json;
+  serializeJson(doc, json);
+  return json;
 }
 
 Result AppConfig::setLastResult(const String& date, bool success, const String& message) {

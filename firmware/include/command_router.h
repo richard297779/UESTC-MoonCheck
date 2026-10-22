@@ -94,6 +94,9 @@ class CommandRouter {
   void handleAccountEnable(JsonObjectConst request, int32_t id);
   void handleMultiSet(JsonObjectConst request, int32_t id);
   void handleNotifySet(JsonObjectConst request, int32_t id);
+  /// @brief 额外推送通道管理（0.4.0）：notify.add / remove / enable / link。
+  /// @note 四个 op 共用一个解析器，按 op 分派到 AppConfig 的通道 API。
+  void handleNotifyChannel(const String& op, JsonObjectConst request, int32_t id);
 
   // ---- 指令处理（慢，在 net_task 中执行）----
   void execute(const WorkItem& item);

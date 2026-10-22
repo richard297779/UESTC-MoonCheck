@@ -10,10 +10,22 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
+#include <vector>
+
 #include "app_types.h"
 
 /// @brief 多账号条目（完整定义见 account_store.h）。
 struct CheckinProfile;
+
+/// @brief 额外通知通道：每个通道 = 一个独立推送端（例如某位家长的 Server酱 SendKey）。
+/// @note 索引约定：0 = 旧 notify.set 的默认通道（不落在这里）；1..kMaxExtraChannels = 下表元素。
+struct NotifyChannel {
+  String label;        ///< 1-12 字符，A-Za-z0-9-_，表内唯一
+  String url;          ///< 完整推送 URL（含 token，绝不整条打印）
+  uint8_t style = 0;   ///< 0=GET 模板 1=POST 纯文本 2=POST JSON（与 setNotify 相同）
+  bool enabled = true; ///< 单通道开关（关闭后该通道不发送任何消息）
+  String accountsCsv;  ///< 关联账号："A01,A02"（多选）；"all"=全部账号 + 全局事件
+};
 
 class AppConfig {
  public:
@@ -83,6 +95,8 @@ class AppConfig {
   const String& notifyUrl() const { return m_notifyUrl; }
   /// @brief URL 脱敏形式（只保留 scheme + host + 掩码），供 status / 日志使用。
   String notifyUrlMasked() const;
+  /// @brief 对任意 URL 做同样的脱敏（scheme+host+"/***(len=N)"）。
+  static String maskUrl(const String& url);
   /// @brief 同一事件两次推送之间的最小间隔（去重/限流）。
   uint16_t notifyGapSeconds() const { return m_notifyGapSeconds; }
   /// @brief 每日推送上限（防止故障时刷屏或触发对端限流）。
@@ -94,6 +108,31 @@ class AppConfig {
   /// @param gap     -1=不改，0-3600=设置去重间隔秒
   /// @param quota   -1=不改，0-255=设置每日上限
   Result setNotify(int enabled, int style, const String& url, int gap, int quota);
+
+  // ---- 额外通知通道（每人一个 Server酱等端点，可多选关联账号；默认通道行为保持不变）----
+  static constexpr size_t kMaxExtraChannels = 5;
+
+  /// @brief 额外通道数量（不含默认通道）。
+  size_t notifyChannelCount() const { return m_notifyChannels.size(); }
+  /// @brief 取额外通道（0 <= idx < count）。
+  const NotifyChannel& notifyChannelAt(size_t idx) const { return m_notifyChannels[idx]; }
+  /// @brief 按标签查额外通道索引；不存在返回 -1。
+  int notifyChannelIndexByLabel(const String& label) const;
+  /// @brief upsert 一条额外通道；accountsCsv 空串按 "all" 处理；on<0 表示不改开关。
+  Result addOrUpdateNotifyChannel(const String& label, const String& url, int style, int on,
+                                  const String& accountsCsv);
+  /// @brief 删除额外通道。
+  Result removeNotifyChannel(const String& label);
+  /// @brief 单独开关某条额外通道。
+  Result setNotifyChannelEnabled(const String& label, bool on);
+  /// @brief 重新关联额外通道的账号（"A01,A02" 或 "all"）。
+  Result linkNotifyChannel(const String& label, const String& accountsCsv);
+  /// @brief 事件账号是否命中该额外通道（"all" 恒命中）。idx 为额外通道索引。
+  bool notifyChannelMatchesAccount(size_t idx, const String& account) const;
+  /// @brief 额外通道列表（URL 脱敏），供 notify.status 展示。
+  String notifyChannelsJson() const;
+  /// @brief 是否存在任一可用的额外通道（开启且 URL 非空）。
+  bool hasActiveExtraChannel() const;
 
   /// @brief 记录最近一次打卡结果（持久化，掉电重启后仍可查询）。
   Result setLastResult(const String& date, bool success, const String& message);
@@ -114,6 +153,8 @@ class AppConfig {
  private:
   Result loadAll();
   Result persistString(const char* key, const String& value);
+  /// @brief 把 m_notifyChannels 序列化为 JSON 写入 NVS "n_chans"。
+  Result persistNotifyChannels();
 
   Preferences m_prefs;
   bool m_opened = false;
@@ -129,5 +170,6 @@ class AppConfig {
   String m_notifyUrl;               ///< 推送 URL（含 token，只输出 host）
   uint16_t m_notifyGapSeconds = 60; ///< 同事件去重间隔
   uint8_t m_notifyDailyQuota = 40;  ///< 每日推送上限
+  std::vector<NotifyChannel> m_notifyChannels;  ///< 额外推送通道（不含默认通道）
   SemaphoreHandle_t m_mutex = nullptr;
 };

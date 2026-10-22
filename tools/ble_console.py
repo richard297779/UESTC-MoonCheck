@@ -52,11 +52,18 @@
     probe                      前置体检（只读，随时可用）
     checkin [force]            打卡（force=跳过"今日已打卡"检查）
     clear                      清空 Cookie（模拟会话失效）
-    notify                     查看通知通道配置 + 今日已发条数 + 待重试条数
+    notify                     查看通知通道配置 + 额外通道列表 + 今日已发条数
     notify set url=<推送地址> [style=0|1|2] [on=1] [gap=秒] [quota=条]
                                style 0=Bark 式 GET 模板 1=ntfy 式 POST 纯文本 2=POST JSON（默认）
                                gap=同类事件去重间隔（默认 60）quota=每日上限（默认 40，0=不限）
-    notify test [文本]          立刻发一条真实通知（不进队列、不去重），用来验证通道
+    notify add <标签> url=… [style=…] [accounts=A01,A02|all] [on=1]
+                               额外推送通道（最多 5 条）：accounts 关联哪些账号的
+                               逐人打卡结果；all=收全部事件（默认通道不受关联限制）
+    notify rm <标签>            删除额外通道
+    notify on|off <标签>        单独开关额外通道
+    notify link <标签> <账号表>  改关联（A01,A02 或 all）
+    notify test [chan=<标签>] [文本]
+                               立刻发一条真实通知（不进队列、不去重）；chan= 指定额外通道
     session <value>            注入外部 SESSION（调试用，例如浏览器窗口内建立的会话）
     reset                      恢复出厂（会二次确认）
     raw <json>                 直接发送原始 JSON
@@ -198,35 +205,72 @@ class Console:
             return True
 
         if command == "notify":
-            # notify            -> 查看通知配置与今日发送计数
-            # notify set ...    -> 配置通道
-            # notify test [文本] -> 立刻发一条真实通知（不进队列、不受去重限制）
-            if not args:
-                await self.send({"op": "notify.status"})
-            elif args[0] == "test":
-                payload = {"op": "test.notify"}
-                if len(args) > 1:
-                    payload["body"] = " ".join(args[1:])
-                await self.send(payload)
-            elif args[0] == "set":
-                payload = {"op": "notify.set"}
-                for token in args[1:]:
+            # notify            -> 查看通知配置与今日发送计数（含额外通道列表）
+            # notify set ...    -> 配置默认通道
+            # notify add <标签> url=… [style=…] [accounts=A01,A02|all] [on=1]
+            #                        -> 新增/更新一条额外推送通道（0.4.0，最多 5 条）
+            # notify rm <标签> | notify on|off <标签> | notify link <标签> <A01,A02|all>
+            # notify test [chan=<标签>] [文本] -> 立刻发一条真实通知（不进队列、不受去重限制）
+            def _kv(payload: dict, tokens: list, int_keys: tuple) -> None:
+                for token in tokens:
                     if "=" not in token:
                         print(f"  忽略无法识别的参数：{token}（应为 key=value）")
                         continue
                     key, value = token.split("=", 1)
                     if key == "on":
                         payload["on"] = value in ("1", "true", "yes", "on")
-                    elif key in ("style", "gap", "quota"):
+                    elif key in int_keys:
                         try:
                             payload[key] = int(value)
                         except ValueError:
                             print(f"  {key}= 需要整数，已忽略：{value}")
                     else:
                         payload[key] = value
+
+            if not args or args[0] == "list":
+                await self.send({"op": "notify.status"})
+            elif args[0] == "test":
+                payload = {"op": "test.notify"}
+                rest = args[1:]
+                if rest and rest[0].startswith("chan="):
+                    payload["chan"] = rest[0][len("chan="):]
+                    rest = rest[1:]
+                if rest:
+                    payload["body"] = " ".join(rest)
                 await self.send(payload)
+            elif args[0] == "set":
+                payload = {"op": "notify.set"}
+                _kv(payload, args[1:], ("style", "gap", "quota"))
+                await self.send(payload)
+            elif args[0] == "add":
+                if len(args) < 2:
+                    print("  用法：notify add <标签> url=<推送地址> [style=0|1|2] "
+                          "[accounts=A01,A02|all] [on=1]")
+                else:
+                    payload = {"op": "notify.add", "label": args[1]}
+                    _kv(payload, args[2:], ("style",))
+                    await self.send(payload)
+            elif args[0] in ("rm", "remove"):
+                if len(args) < 2:
+                    print("  用法：notify rm <标签>")
+                else:
+                    await self.send({"op": "notify.remove", "label": args[1]})
+            elif args[0] in ("on", "off"):
+                if len(args) < 2:
+                    print("  用法：notify on|off <标签>")
+                else:
+                    await self.send({"op": "notify.enable", "label": args[1],
+                                     "on": args[0] == "on"})
+            elif args[0] == "link":
+                if len(args) < 3:
+                    print("  用法：notify link <标签> <A01,A02|all>（关联哪些账号的打卡结果）")
+                else:
+                    await self.send({"op": "notify.link", "label": args[1], "accounts": args[2]})
             else:
-                print("  用法：notify | notify set url=… [style=0|1|2] [on=1] [gap=秒] [quota=条] | notify test [文本]")
+                print("  用法：notify | notify set url=… [style=0|1|2] [on=1] [gap=秒] [quota=条]")
+                print("        notify add <标签> url=… [style=0|1|2] [accounts=A01,A02|all] [on=1]")
+                print("        notify rm <标签> | notify on|off <标签> | notify link <标签> <账号表>")
+                print("        notify test [chan=<标签>] [文本]")
         elif command == "session":
             if not args:
                 print("  用法：session <SESSION值>（把外部会话注入设备，用于只读验证）")

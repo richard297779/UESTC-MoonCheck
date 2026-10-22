@@ -6,8 +6,8 @@
 capture/
 *.har
 burp-items.xml
-tools/pc_reference/config.json
-tools/pc_reference/out/
+dev/tools/pc_reference/config.json
+dev/tools/pc_reference/out/
 out/
 *.session.json
 
@@ -18,8 +18,10 @@ firmware/.pio/
 .pio/
 .pioenvs/
 .piolibdeps/
-release/
+release/s3-full/
+release/wroom32-4mb-full/
 release.bak-*/
+release/MoonCheck-*
 *.bin
 *.elf
 *.map

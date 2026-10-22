@@ -1,6 +1,6 @@
 # 🌙 MoonCheck
 
-**ESP32 宿舍自动定位打卡终端** · 固件 v0.3.1
+**ESP32 宿舍自动定位打卡终端** · 固件 v0.4.0（另有 [桌面版](desktop/README.md)，免硬件）
 
 一块常驻宿舍的 ESP32，蓝牙配置一次，之后每晚自动完成「登录 → 门户预热 → 进入微应用 → 定位打卡 → 结果确认」。配置完成后不需要电脑，也不用每天操作。
 
@@ -16,9 +16,10 @@
 - **结果可查**：打卡后自动复查，结果写入设备，掉电不丢；`status` / `probe` 随时查询。
 - **掉电自恢复**：重启后自动重连 WiFi、校时、继续调度。
 - **自带诊断**：`chain` 全链路自检、`netcheck` 判断校园网认证、`scan` 看 2.4 GHz、`logs` 回读日志。
-- **手机通知**（可选）：Bark / ntfy / Server酱 / 局域网中转，成功、失败、重试都有推送。
+- **手机通知**（可选）：Bark / ntfy / Server酱 / 局域网中转，成功、失败、重试都有推送；支持**多通道**（每人一条通道，自己的结果只推给自己）。
 - **一台设备多人**：账号表最多 6 人，可单独开关（需每位账号持有者知情同意）。
 - **两种板型**：ESP32-S3（16 MB，推荐）与经典 ESP32-WROOM-32（4 MB）。
+- **桌面版**：同款核心打成单个 `MoonCheck.exe` / Linux 可执行文件，CLI + 图形界面双配置，也支持多账号与逐人推送。
 
 ---
 
@@ -117,7 +118,13 @@ notify set url=https://sctapi.ftqq.com/<你的SendKey>.send style=2
 notify test 你好
 ```
 
-Bark / ntfy / Server酱 的申请方式、事件说明和排错见 **[手机通知](docs/notify.md)**。
+0.4.0 起支持多通道：**每个人的结果单独推给每个人**（最多再挂 5 条附加通道）：
+
+```text
+notify add A02url url=https://sctapi.ftqq.com/<他的SendKey>.send style=2 accounts=A02
+```
+
+Bark / ntfy / Server酱 的申请方式、事件说明、路由规则与排错见 **[手机通知](docs/notify.md)**。
 
 ---
 
@@ -129,9 +136,10 @@ Bark / ntfy / Server酱 的申请方式、事件说明和排错见 **[手机通�
 account add A01 <学号> <密码> [指纹]    # 最多 6 个
 account on A01                          # 或 account off A01
 multi probe                             # 只读演练，不提交
+notify add A01url url=… accounts=A01    # 结果单独推给他
 ```
 
-详见 **[多人打卡](docs/multi-account.md)**。
+详见 **[多人打卡](docs/multi-account.md)**。不想用硬件？同款核心的 [桌面版](desktop/README.md)（Windows/Linux 单文件）也支持多账号与逐人推送。
 
 ---
 
@@ -142,8 +150,9 @@ multi probe                             # 只读演练，不提交
 | [快速开始](docs/quickstart.md) | 从刷好固件到自动打卡，含截图 |
 | [刷固件](docs/flashing.md) | 网页刷写、升级、换分区表、报错处理 |
 | [指令手册](docs/commands.md) | 全部蓝牙命令与 JSON 指令 |
-| [手机通知](docs/notify.md) | Bark / ntfy / Server酱 / 局域网中转 |
+| [手机通知](docs/notify.md) | Bark / ntfy / Server酱 / 局域网中转、多通道分发 |
 | [多人打卡](docs/multi-account.md) | 账号表与逐个开关 |
+| [桌面版](desktop/README.md) | 不烧板子：Windows/Linux 单文件版（CLI+图形界面） |
 | [常见问题](docs/faq.md) | 排错速查与已知限制 |
 | [发行说明](release/notes.md) | 版本变化与升级注意 |
 | [自行编译](firmware/README.md) | 用 PlatformIO 从源码构建 |

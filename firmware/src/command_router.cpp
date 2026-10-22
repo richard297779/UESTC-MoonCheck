@@ -282,8 +282,16 @@ void CommandRouter::dispatchCommand(const String& line) {
     } else {
       replyOk(id, "notify", m_notify->statusJson());
     }
+  } else if (op == "notify.add" || op == "notify.remove" || op == "notify.enable" ||
+             op == "notify.link") {
+    handleNotifyChannel(op, request, id);
   } else if (op == "test.notify") {
-    if (!enqueue(WorkKind::NotifyTest, request["body"] | "", false, id)) {
+    // 可选 "chan":"标签"：指定额外通道试发（不带=默认通道）。
+    // 载荷格式 "标签\n正文"；无 chan 时保持原样（向后兼容）。
+    const String chan = request["chan"] | "";
+    const String body = request["body"] | "";
+    const String payload = chan.length() > 0 ? chan + "\n" + body : body;
+    if (!enqueue(WorkKind::NotifyTest, payload, false, id)) {
       replyError(id, Result::InternalError, "device busy");
     }
   } else if (op == "account.add") {
@@ -1015,6 +1023,8 @@ void CommandRouter::workTestCheckin(const WorkItem& item) {
   if (!pending) flashResult(ok);  // Pending 既非成功也非失败，不闪灯
 
   const String todayKey = m_time != nullptr ? m_time->todayString() : String();
+  // 本次手动打卡归属的账号标签（无账号表时 = "device"）：逐账号关联的额外通道靠它匹配
+  const String who = m_config != nullptr ? m_config->activeAccount() : String();
 
   // 持久化本轮结果。★ 只有「当前只有一个账号参与」才允许写全局 last —— 那是
   // 调度器今晚不再重试的凭证；多账号时手动替某一个人补打，若写成 last=ok，
@@ -1036,14 +1046,14 @@ void CommandRouter::workTestCheckin(const WorkItem& item) {
     case CheckinOutcome::Success:
       emitEvent("result", "\"ok\":true,\"msg\":\"" + escapeJson(message) + "\"");
       if (m_notify != nullptr) {
-        m_notify->post(NotifyKind::CheckinOk, "打卡成功：" + message, todayKey + "/ok");
+        m_notify->post(NotifyKind::CheckinOk, "打卡成功：" + message, todayKey + "/ok", who);
       }
       replyOk(item.requestId, message.isEmpty() ? "checked in" : message);
       break;
     case CheckinOutcome::AlreadyDone:
       emitEvent("result", "\"ok\":true,\"already\":true,\"msg\":\"" + escapeJson(message) + "\"");
       if (m_notify != nullptr) {
-        m_notify->post(NotifyKind::CheckinOk, "今日已打卡：" + message, todayKey + "/ok");
+        m_notify->post(NotifyKind::CheckinOk, "今日已打卡：" + message, todayKey + "/ok", who);
       }
       replyOk(item.requestId, message.isEmpty() ? "already checked in" : message);
       break;
@@ -1055,14 +1065,14 @@ void CommandRouter::workTestCheckin(const WorkItem& item) {
       emitEvent("alert", "\"kind\":\"mfa\",\"msg\":\"second factor required\"");
       if (m_notify != nullptr) {
         m_notify->post(NotifyKind::NeedMfa, "打卡被二次验证拦住：需要浏览器指纹或验证码",
-                       todayKey + "/mfa");
+                       todayKey + "/mfa", who);
       }
       replyError(item.requestId, Result::NeedMfa, message);
       break;
     case CheckinOutcome::Failed:
       emitEvent("result", "\"ok\":false,\"msg\":\"" + escapeJson(message) + "\"");
       if (m_notify != nullptr) {
-        m_notify->post(NotifyKind::CheckinFail, "打卡失败：" + message, todayKey + "/fail");
+        m_notify->post(NotifyKind::CheckinFail, "打卡失败：" + message, todayKey + "/fail", who);
       }
       replyError(item.requestId, Result::InternalError, message);
       break;
@@ -1193,7 +1203,8 @@ void CommandRouter::workMultiCheckin(const WorkItem& item) {
     String failed;
     for (JsonObject one : doc.as<JsonArray>()) {
       const String oneResult = one["result"] | "";
-      if (oneResult == "ok" || oneResult == "already_done" || oneResult == "disabled") continue;
+      // 用 ok 布尔判成功（result 是 outcomeName："success"/"already_done"/…，别按字面 "ok" 比）
+      if ((one["ok"] | false) || oneResult == "disabled") continue;
       if (failed.length() > 0) failed += "、";
       failed += String(one["label"] | "?") + "(" + oneResult + ")";
     }
@@ -1208,11 +1219,39 @@ void CommandRouter::workMultiCheckin(const WorkItem& item) {
   if (!allOk) {
     body += "；将在 " + String(AppConst::kCheckinRetrySeconds / 60) + " 分钟后重试";
   }
+  // 汇总只进默认通道：额外通道走下面的逐账号事件，避免"汇总+单人结果"重复刷屏。
   m_notify->post(allOk ? NotifyKind::CheckinOk : NotifyKind::CheckinFail, body,
                  m_time->todayString() +
                      (allOk ? String("/multi")
                             : String("/multi-fail/") +
-                                  String(static_cast<unsigned>((round - 1) / 3))));
+                                  String(static_cast<unsigned>((round - 1) / 3))),
+                 String(), NotifyTarget::DefaultOnly);
+
+  // ---- 逐账号单独推送（0.4.0）：只发给关联了该账号的额外通道 ----
+  if (deserializeJson(doc, run.summary) == DeserializationError::Ok) {
+    const String today = m_time->todayString();
+    const unsigned bucket = static_cast<unsigned>((round - 1) / 3);
+    for (JsonObject one : doc.as<JsonArray>()) {
+      const String label = one["label"] | "";
+      const String oneResult = one["result"] | "";
+      if (label.length() == 0 || oneResult == "disabled") continue;
+      const String msg = one["msg"] | "";
+      if (one["ok"] | false) {
+        m_notify->post(NotifyKind::CheckinOk,
+                       label + "：" + (oneResult == "already_done" ? "今日已打卡"
+                                                                    : "打卡成功 " + msg),
+                       today + "/" + label + "/ok", label, NotifyTarget::AccountOnly);
+      } else if (oneResult == "need_mfa") {
+        m_notify->post(NotifyKind::NeedMfa, label + "：被二次验证拦住 " + msg,
+                       today + "/" + label + "/mfa", label, NotifyTarget::AccountOnly);
+      } else if (msg.length() > 0) {
+        // 未成功：同样只在播报轮（第 1、4、7… 次）发，避免每 3 分钟刷屏
+        m_notify->post(NotifyKind::CheckinFail, label + "：本轮未成功（" + oneResult + "）" + msg,
+                       today + "/" + label + "/fail/" + String(bucket), label,
+                       NotifyTarget::AccountOnly);
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- 通知
@@ -1241,19 +1280,121 @@ void CommandRouter::handleNotifySet(JsonObjectConst request, int32_t id) {
   replyOk(id, "notify config saved", m_notify != nullptr ? m_notify->statusJson() : String());
 }
 
+// 额外推送通道（0.4.0）：每条通道 = 标签 + 推送地址 + style + 开关 + 关联账号。
+// 关联账号支持数组 ["A01","A02"] 或字符串 "A01,A02" / "all"（空=全部账号与全局事件）。
+void CommandRouter::handleNotifyChannel(const String& op, JsonObjectConst request, int32_t id) {
+  if (m_config == nullptr) {
+    replyError(id, Result::NotReady, "config unavailable");
+    return;
+  }
+  const String label = request["label"] | "";
+  if (label.length() == 0) {
+    replyError(id, Result::InvalidParam, "label required");
+    return;
+  }
+
+  // 解析 accounts 字段：数组或逗号分隔串（缺省=不限制，收全部）
+  String accountsCsv;
+  if (op == "notify.add" || op == "notify.link") {
+    JsonVariantConst acc = request["accounts"];
+    if (acc.is<const char*>()) {
+      accountsCsv = acc.as<const char*>();
+    } else if (acc.is<JsonArray>()) {
+      for (JsonVariantConst v : acc.as<JsonArrayConst>()) {
+        if (accountsCsv.length() > 0) accountsCsv += ",";
+        accountsCsv += v.as<String>();
+      }
+    }
+  }
+
+  Result result = Result::Ok;
+  if (op == "notify.add") {
+    const String url = request["url"] | "";
+    const int style = request["style"] | 2;  // 默认 post_json：Server酱 desp 自动识别最稳
+    const int on = request["on"].is<bool>() ? (request["on"].as<bool>() ? 1 : 0) : 1;
+    result = m_config->addOrUpdateNotifyChannel(label, url, style, on, accountsCsv);
+    if (result == Result::Ok) {
+      replyOk(id, "notify channel saved", m_notify != nullptr ? m_notify->statusJson() : String());
+      return;
+    }
+    replyError(id, result,
+               "invalid channel (label: A-Z a-z 0-9 - _ <=12; url required; style 0..2; "
+               "accounts: \"A01,A02\" | [\"A01\"] | \"all\"; max 5 channels)");
+    return;
+  }
+  if (op == "notify.remove") {
+    result = m_config->removeNotifyChannel(label);
+    if (result == Result::Ok) {
+      replyOk(id, "notify channel removed",
+              m_notify != nullptr ? m_notify->statusJson() : String());
+      return;
+    }
+    replyError(id, result, "channel not found");
+    return;
+  }
+  if (op == "notify.enable") {
+    const bool on = request["on"].is<bool>() ? request["on"].as<bool>() : true;
+    result = m_config->setNotifyChannelEnabled(label, on);
+    if (result == Result::Ok) {
+      replyOk(id, on ? "notify channel on" : "notify channel off",
+              m_notify != nullptr ? m_notify->statusJson() : String());
+      return;
+    }
+    replyError(id, result, "channel not found");
+    return;
+  }
+  // notify.link
+  result = m_config->linkNotifyChannel(label, accountsCsv);
+  if (result == Result::Ok) {
+    replyOk(id, "notify channel linked", m_notify != nullptr ? m_notify->statusJson() : String());
+    return;
+  }
+  replyError(id, result, "channel not found (or invalid accounts)");
+}
+
 void CommandRouter::workNotifyTest(const WorkItem& item) {
   setBusy(true);
   String body = String(item.payload);
+
+  // 载荷可能带通道前缀："标签\n正文"（见 dispatchCommand 的 test.notify）。
+  // 只有当首行确实是一个已存在的通道标签时才切分，否则整串按正文处理（向后兼容）。
+  uint8_t channel = 0;
+  String chanError;
+  const int nl = body.indexOf('\n');
+  if (nl > 0) {
+    const String label = body.substring(0, nl);
+    const int idx = (m_config != nullptr) ? m_config->notifyChannelIndexByLabel(label) : -1;
+    if (idx >= 0) {
+      channel = static_cast<uint8_t>(idx + 1);
+      body = body.substring(nl + 1);
+    } else if (label.length() <= 12 && label.indexOf(' ') < 0) {
+      chanError = "channel not found: " + label;
+      body = body.substring(nl + 1);
+    }
+  } else if (nl == 0) {
+    body = body.substring(1);  // 空标签 = 默认通道
+  }
   if (body.length() == 0) {
     body = "这是一条来自打卡器的测试通知";
     if (m_time != nullptr) body = m_time->nowString() + " " + body;
   }
 
   int status = 0;
-  String error;
+  String error = chanError;
   bool sent = false;
+  String targetUrl = m_config != nullptr ? m_config->notifyUrlMasked() : String("<unset>");
+  int targetStyle = m_config != nullptr ? static_cast<int>(m_config->notifyStyle()) : -1;
   if (m_notify == nullptr) {
     error = "notify service unavailable";
+  } else if (channel > 0 && m_config != nullptr) {
+    const NotifyChannel& ch = m_config->notifyChannelAt(channel - 1);
+    targetUrl = AppConfig::maskUrl(ch.url);
+    targetStyle = static_cast<int>(ch.style);
+    if (!ch.enabled) {
+      error = "通道已关闭：notify enable 打开后再试";
+    } else {
+      sent = m_notify->sendNow(NotifyKind::Info, body, &status, error, channel);
+    }
   } else if (!m_notify->active()) {
     error = "通知未启用或 URL 为空：先执行 notify set url=<推送地址> on=1";
   } else {
@@ -1262,11 +1403,11 @@ void CommandRouter::workNotifyTest(const WorkItem& item) {
   setBusy(false);
   flashResult(sent);
 
-  char data[192];
-  snprintf(data, sizeof(data), "{\"sent\":%s,\"httpStatus\":%d,\"url\":\"%s\",\"style\":%d}",
-           sent ? "true" : "false", status,
-           m_config != nullptr ? m_config->notifyUrlMasked().c_str() : "",
-           m_config != nullptr ? static_cast<int>(m_config->notifyStyle()) : -1);
+  char data[256];
+  snprintf(data, sizeof(data),
+           "{\"sent\":%s,\"httpStatus\":%d,\"url\":\"%s\",\"style\":%d,\"channel\":%u}",
+           sent ? "true" : "false", status, targetUrl.c_str(), targetStyle,
+           static_cast<unsigned>(channel));
   if (sent) {
     replyOk(item.requestId, "notification sent: " + body, String(data));
   } else {
@@ -1293,4 +1434,21 @@ void CommandRouter::workDeadlineMissed(const WorkItem& item) {
   String body = "打卡窗口已关闭（23:30），今天仍未成功。";
   if (reason.length() > 0) body += "最后原因：" + reason;
   m_notify->post(NotifyKind::DeadlineMissed, body, m_time->todayString() + "/deadline");
+
+  // 逐账号告警：关联了该账号的额外通道，各自收到自己那条（0.4.0）。
+  // 判定只看账号表当天的确认结果；表为空（单人在默认配置上）时上面的全局条已覆盖。
+  if (m_accounts != nullptr) {
+    const String today = m_time->todayString();
+    CheckinProfile profile;
+    for (size_t i = 0; i < m_accounts->count(); i++) {
+      if (!m_accounts->get(i, profile) || !profile.enabled) continue;
+      if (m_accounts->isCheckedInToday(profile.label, today)) continue;
+      String oneBody = profile.label + "：窗口已关闭，今天仍未打卡成功。";
+      if (profile.lastMsg.length() > 0 && profile.lastDate == today) {
+        oneBody += "最后原因：" + profile.lastMsg;
+      }
+      m_notify->post(NotifyKind::DeadlineMissed, oneBody, today + "/" + profile.label + "/deadline",
+                     profile.label, NotifyTarget::AccountOnly);
+    }
+  }
 }

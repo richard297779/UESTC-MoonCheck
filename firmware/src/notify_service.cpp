@@ -1,5 +1,7 @@
 // ============================================================================
 //  NotifyService 实现（见 notify_service.h 的设计约束与线程约束）
+//  0.4.0 起支持多通道：默认通道（notify.set）+ 最多 5 条额外通道（notify.add），
+//  逐账号事件按 NotifyTarget 分发；去重与每日配额按通道独立计数。
 // ============================================================================
 
 #include "notify_service.h"
@@ -135,15 +137,18 @@ Result NotifyService::begin(AppConfig& config, HttpClient& http, TimeService& ti
     m_dedup[i].key[0] = '\0';
     m_dedup[i].lastSec = 0;
   }
-  LOG_I(kTag, "notify ready (enabled=%d, style=%u, host=%s, gap=%us, quota=%u)",
+  for (uint8_t i = 0; i < kChannelSlots; i++) m_sentTodayCh[i] = 0;
+  LOG_I(kTag, "notify ready (enabled=%d, style=%u, host=%s, gap=%us, quota=%u, extra=%u)",
         m_config->notifyEnabled() ? 1 : 0, m_config->notifyStyle(),
         m_config->notifyUrlMasked().c_str(), m_config->notifyGapSeconds(),
-        m_config->notifyDailyQuota());
+        m_config->notifyDailyQuota(), static_cast<unsigned>(m_config->notifyChannelCount()));
   return Result::Ok;
 }
 
 bool NotifyService::active() const {
-  return m_config != nullptr && m_config->notifyEnabled() && m_config->notifyUrl().length() > 0;
+  if (m_config == nullptr) return false;
+  if (m_config->notifyEnabled() && m_config->notifyUrl().length() > 0) return true;
+  return m_config->hasActiveExtraChannel();
 }
 
 bool NotifyService::dedupAllow(const char* key, uint32_t nowSec) {
@@ -185,20 +190,26 @@ void NotifyService::rollDay() {
   if (strcmp(m_quotaDate, today.c_str()) != 0) {
     strncpy(m_quotaDate, today.c_str(), sizeof(m_quotaDate) - 1);
     m_quotaDate[sizeof(m_quotaDate) - 1] = '\0';
-    m_sentToday = 0;
+    for (uint8_t i = 0; i < kChannelSlots; i++) m_sentTodayCh[i] = 0;
     m_retryCount = 0;   // 「重试 #N」也按天重新编号
   }
 }
 
-bool NotifyService::quotaAllow() {
-  if (m_config == nullptr) return false;
+bool NotifyService::quotaAllow(uint8_t channel) {
+  if (m_config == nullptr || channel >= kChannelSlots) return false;
   const uint8_t quota = m_config->notifyDailyQuota();
   if (quota == 0) return true;  // 0 = 不限
-  return m_sentToday < quota;
+  return m_sentTodayCh[channel] < quota;
 }
 
-void NotifyService::noteSent() {
-  if (m_sentToday < 250) m_sentToday++;
+void NotifyService::noteSent(uint8_t channel) {
+  if (channel < kChannelSlots && m_sentTodayCh[channel] < 250) m_sentTodayCh[channel]++;
+}
+
+uint8_t NotifyService::totalSentToday() const {
+  uint8_t sum = 0;
+  for (uint8_t i = 0; i < kChannelSlots; i++) sum += m_sentTodayCh[i];
+  return sum;
 }
 
 uint8_t NotifyService::bumpAttempt() {
@@ -207,80 +218,130 @@ uint8_t NotifyService::bumpAttempt() {
   return m_retryCount;
 }
 
-void NotifyService::post(NotifyKind kind, const String& body, const String& key) {
+/// @brief 该通道是否接收这条事件（含开关与账号匹配规则）。
+bool NotifyService::channelAccepts(uint8_t channel, const String& account, NotifyTarget target) const {
+  if (channel >= kChannelSlots) return false;
+  const bool wantDefault = (target != NotifyTarget::AccountOnly);
+  const bool wantExtra = (target != NotifyTarget::DefaultOnly);
+  if (channel == 0) {
+    if (!wantDefault) return false;
+    return m_config->notifyEnabled() && m_config->notifyUrl().length() > 0;
+  }
+  if (!wantExtra) return false;
+  const size_t idx = static_cast<size_t>(channel - 1);
+  if (idx >= m_config->notifyChannelCount()) return false;
+  const NotifyChannel& ch = m_config->notifyChannelAt(idx);
+  if (!ch.enabled || ch.url.length() == 0) return false;
+  return m_config->notifyChannelMatchesAccount(idx, account);
+}
+
+void NotifyService::post(NotifyKind kind, const String& body, const String& key,
+                         const String& account, NotifyTarget target) {
   if (!active()) return;  // 未启用 / 未配置站点：静默（不打扰打卡主流程）
   rollDay();
 
   const uint32_t nowSec = (m_time != nullptr && m_time->isSynced()) ? static_cast<uint32_t>(m_time->now()) : 0;
-  const char* dedupKey = key.length() > 0 ? key.c_str() : kindName(kind);
-  if (!dedupAllow(dedupKey, nowSec)) {
-    LOG_I(kTag, "dedup: %s within %us", dedupKey, m_config->notifyGapSeconds());
-    return;
-  }
-  if (!quotaAllow()) {
-    LOG_W(kTag, "daily quota (%u) reached, drop %s", m_config->notifyDailyQuota(), kindName(kind));
-    return;
-  }
+  const char* baseKey = key.length() > 0 ? key.c_str() : kindName(kind);
 
-  // 重试事件自动编号：第 N 轮
+  // 标题：[设备名] 或 [设备名·账号]；重试事件自动编号 #N
+  char titleBase[64];
+  if (account.length() > 0) {
+    snprintf(titleBase, sizeof(titleBase), "[%s·%s]", m_config->bleDeviceName().c_str(),
+             account.c_str());
+  } else {
+    snprintf(titleBase, sizeof(titleBase), "[%s]", m_config->bleDeviceName().c_str());
+  }
   char title[64];
   if (kind == NotifyKind::CheckinRetry) {
     // 轮次编号由调用方 bumpAttempt() 维护：被限流挡掉的那些轮也要计入"第 N 轮"
-    snprintf(title, sizeof(title), "[%s] %s #%u", m_config->bleDeviceName().c_str(),
-             kindTitle(kind), static_cast<unsigned>(m_retryCount));
+    snprintf(title, sizeof(title), "%s %s #%u", titleBase, kindTitle(kind),
+             static_cast<unsigned>(m_retryCount));
   } else {
-    snprintf(title, sizeof(title), "[%s] %s", m_config->bleDeviceName().c_str(),
-             kindTitle(kind));
+    snprintf(title, sizeof(title), "%s %s", titleBase, kindTitle(kind));
   }
 
-  // 入队（环形，满了挤掉最旧的一条）
-  uint8_t slot = kQueueCapacity;
-  for (uint8_t i = 0; i < kQueueCapacity; i++) {
-    if (!m_queue[i].used) {
-      slot = i;
-      break;
+  bool mirrored = false;
+  for (uint8_t ch = 0; ch < kChannelSlots; ch++) {
+    if (!channelAccepts(ch, account, target)) continue;
+
+    // 去重键按通道隔离："cN|<key>"，某通道被限流不影响其它通道
+    char dedupKey[32];
+    snprintf(dedupKey, sizeof(dedupKey), "c%u|%s", static_cast<unsigned>(ch), baseKey);
+    if (!dedupAllow(dedupKey, nowSec)) {
+      LOG_I(kTag, "dedup c%u: %s within %us", static_cast<unsigned>(ch), dedupKey,
+            m_config->notifyGapSeconds());
+      continue;
     }
-  }
-  if (slot >= kQueueCapacity) {
-    // 满：覆盖「产生时间最早」的一条（不覆盖刚要写入的这条自己）
-    slot = 0;
-    uint32_t oldest = 0xFFFFFFFFu;
+    if (!quotaAllow(ch)) {
+      LOG_W(kTag, "daily quota (%u) reached on channel %u, drop %s",
+            m_config->notifyDailyQuota(), static_cast<unsigned>(ch), kindName(kind));
+      continue;
+    }
+
+    // 入队（环形，满了挤掉最旧的一条）
+    uint8_t slot = kQueueCapacity;
     for (uint8_t i = 0; i < kQueueCapacity; i++) {
-      if (m_queue[i].createdAtSec <= oldest) {
-        oldest = m_queue[i].createdAtSec;
+      if (!m_queue[i].used) {
         slot = i;
+        break;
       }
     }
-    LOG_W(kTag, "queue full, replace oldest (%s)", kindName(m_queue[slot].kind));
-  } else {
-    m_count++;
-  }
-  NotifyItem& item = m_queue[slot];
-  item.used = true;
-  item.kind = kind;
-  item.attempts = 0;
-  item.nextTryMs = 0;  // 立即可发
-  item.createdAtSec = nowSec;
-  strncpy(item.title, title, sizeof(item.title) - 1);
-  item.title[sizeof(item.title) - 1] = '\0';
-  strncpy(item.body, body.c_str(), sizeof(item.body) - 1);
-  item.body[sizeof(item.body) - 1] = '\0';
-  strncpy(item.key, dedupKey, sizeof(item.key) - 1);
-  item.key[sizeof(item.key) - 1] = '\0';
-  LOG_I(kTag, "queued %s (%u in queue)", kindName(kind), static_cast<unsigned>(m_count));
+    if (slot >= kQueueCapacity) {
+      // 满：覆盖「产生时间最早」的一条（不覆盖刚要写入的这条自己）
+      slot = 0;
+      uint32_t oldest = 0xFFFFFFFFu;
+      for (uint8_t i = 0; i < kQueueCapacity; i++) {
+        if (m_queue[i].createdAtSec <= oldest) {
+          oldest = m_queue[i].createdAtSec;
+          slot = i;
+        }
+      }
+      LOG_W(kTag, "queue full, replace oldest (%s)", kindName(m_queue[slot].kind));
+    } else {
+      m_count++;
+    }
+    NotifyItem& item = m_queue[slot];
+    item.used = true;
+    item.kind = kind;
+    item.channel = ch;
+    item.attempts = 0;
+    item.nextTryMs = 0;  // 立即可发
+    item.createdAtSec = nowSec;
+    strncpy(item.title, title, sizeof(item.title) - 1);
+    item.title[sizeof(item.title) - 1] = '\0';
+    strncpy(item.body, body.c_str(), sizeof(item.body) - 1);
+    item.body[sizeof(item.body) - 1] = '\0';
+    strncpy(item.key, dedupKey, sizeof(item.key) - 1);
+    item.key[sizeof(item.key) - 1] = '\0';
+    LOG_I(kTag, "queued %s -> c%u (%u in queue)", kindName(kind), static_cast<unsigned>(ch),
+          static_cast<unsigned>(m_count));
 
-  // BLE 镜像一份：控制台在线时能立刻看到，不在线也不影响推送
-  if (m_sink) {
-    String payload = String("\"kind\":\"notify\",\"event\":\"") + kindName(kind) + "\",\"title\":\"" +
-                     title + "\",\"body\":\"" + body + "\"";
-    m_sink("event", payload);
+    // BLE 镜像一份（同一事件只镜像一次）：控制台在线时能立刻看到，不在线也不影响推送
+    if (!mirrored && m_sink) {
+      mirrored = true;
+      String payload = String("\"kind\":\"notify\",\"event\":\"") + kindName(kind) +
+                       "\",\"title\":\"" + title + "\",\"body\":\"" + body + "\"";
+      if (account.length() > 0) payload += String(",\"account\":\"") + account + "\"";
+      m_sink("event", payload);
+    }
   }
 }
 
-bool NotifyService::render(const char* title, const char* body, String& outUrl, String& outMethod,
-                           String& outBody, String& outContentType) const {
-  String url = m_config->notifyUrl();  // 可本地修改：JSON 模板模式下要把 "{...}" 从 URL 上切下来
-  const uint8_t style = m_config->notifyStyle();
+bool NotifyService::render(const char* title, const char* body, uint8_t channel, String& outUrl,
+                           String& outMethod, String& outBody, String& outContentType) const {
+  if (m_config == nullptr) return false;
+  String url;
+  uint8_t style;
+  if (channel == 0) {
+    url = m_config->notifyUrl();  // 可本地修改：JSON 模板模式下要把 "{...}" 从 URL 上切下来
+    style = m_config->notifyStyle();
+  } else {
+    const size_t idx = static_cast<size_t>(channel - 1);
+    if (idx >= m_config->notifyChannelCount()) return false;
+    const NotifyChannel& ch = m_config->notifyChannelAt(idx);
+    url = ch.url;
+    style = ch.style;
+  }
   outUrl = url;
   outBody = "";
   outContentType = "text/plain; charset=utf-8";
@@ -339,13 +400,14 @@ bool NotifyService::isServerChan(const String& url) {
          url.indexOf(".send") >= 0;         // 两种版本的推送路径后缀
 }
 
-bool NotifyService::deliver(const char* title, const char* body, int* outStatus, String& outError) {
+bool NotifyService::deliver(const char* title, const char* body, uint8_t channel, int* outStatus,
+                            String& outError) {
   if (m_http == nullptr || m_config == nullptr) {
     outError = "notify not begun";
     return false;
   }
   String url, method, reqBody, contentType;
-  if (!render(title, body, url, method, reqBody, contentType)) {
+  if (!render(title, body, channel, url, method, reqBody, contentType)) {
     outError = "render failed";
     return false;
   }
@@ -385,16 +447,23 @@ bool NotifyService::deliver(const char* title, const char* body, int* outStatus,
   return true;
 }
 
-bool NotifyService::sendNow(NotifyKind kind, const String& body, int* outStatus, String& outError) {
+bool NotifyService::sendNow(NotifyKind kind, const String& body, int* outStatus, String& outError,
+                            uint8_t channel, const String& account) {
   if (m_config == nullptr) {
     outError = "no config";
     return false;
   }
   char title[64];
-  snprintf(title, sizeof(title), "[%s] %s", m_config->bleDeviceName().c_str(), kindTitle(kind));
-  const bool ok = deliver(title, body.c_str(), outStatus, outError);
-  if (ok) noteSent();
-  LOG_I(kTag, "sendNow %s -> %s (status=%d)", kindName(kind), ok ? "ok" : outError.c_str(),
+  if (account.length() > 0) {
+    snprintf(title, sizeof(title), "[%s·%s] %s", m_config->bleDeviceName().c_str(),
+             account.c_str(), kindTitle(kind));
+  } else {
+    snprintf(title, sizeof(title), "[%s] %s", m_config->bleDeviceName().c_str(), kindTitle(kind));
+  }
+  const bool ok = deliver(title, body.c_str(), channel, outStatus, outError);
+  if (ok) noteSent(channel);
+  LOG_I(kTag, "sendNow %s c%u -> %s (status=%d)", kindName(kind),
+        static_cast<unsigned>(channel), ok ? "ok" : outError.c_str(),
         outStatus != nullptr ? *outStatus : 0);
   return ok;
 }
@@ -422,28 +491,31 @@ void NotifyService::pump() {
   NotifyItem& item = m_queue[static_cast<uint8_t>(chosen)];
   int status = 0;
   String error;
-  const bool ok = deliver(item.title, item.body, &status, error);
+  const bool ok = deliver(item.title, item.body, item.channel, &status, error);
   if (ok) {
-    LOG_I(kTag, "sent %s (status=%d, total=%u)", kindName(item.kind), status,
-          static_cast<unsigned>(m_sentToday));
+    LOG_I(kTag, "sent %s c%u (status=%d, chTotal=%u)", kindName(item.kind),
+          static_cast<unsigned>(item.channel), status,
+          static_cast<unsigned>(m_sentTodayCh[item.channel < kChannelSlots ? item.channel : 0]));
     item.used = false;
     if (m_count > 0) m_count--;
-    noteSent();
+    noteSent(item.channel);
     return;
   }
 
   item.attempts++;
   if (item.attempts >= kMaxAttempts) {
-    LOG_W(kTag, "drop %s after %u attempts: %s", kindName(item.kind),
-          static_cast<unsigned>(item.attempts), error.c_str());
+    LOG_W(kTag, "drop %s c%u after %u attempts: %s", kindName(item.kind),
+          static_cast<unsigned>(item.channel), static_cast<unsigned>(item.attempts),
+          error.c_str());
     item.used = false;
     if (m_count > 0) m_count--;
     return;
   }
   const uint32_t waitSec = kBackoffSeconds[item.attempts < 4 ? item.attempts : 3];
   item.nextTryMs = nowMs + waitSec * 1000UL;
-  LOG_W(kTag, "send %s failed (try %u): %s -> retry in %us", kindName(item.kind),
-        static_cast<unsigned>(item.attempts), error.c_str(), static_cast<unsigned>(waitSec));
+  LOG_W(kTag, "send %s c%u failed (try %u): %s -> retry in %us", kindName(item.kind),
+        static_cast<unsigned>(item.channel), static_cast<unsigned>(item.attempts), error.c_str(),
+        static_cast<unsigned>(waitSec));
 }
 
 String NotifyService::statusJson() const {
@@ -459,7 +531,7 @@ String NotifyService::statusJson() const {
   out += ",\"quota\":";
   out += String(m_config ? m_config->notifyDailyQuota() : 40);
   out += ",\"sentToday\":";
-  out += String(static_cast<unsigned>(m_sentToday));
+  out += String(static_cast<unsigned>(totalSentToday()));
   out += ",\"queued\":";
   out += String(static_cast<unsigned>(m_count));
   out += ",\"retryCount\":";
@@ -468,6 +540,28 @@ String NotifyService::statusJson() const {
   out += ",\"contentField\":\"";
   out += (m_config != nullptr && isServerChan(m_config->notifyUrl())) ? "desp" : "body";
   out += "\"";
-  out += "}";
+  // 额外通道列表（URL 已脱敏；sentToday 为该通道独立计数）
+  out += ",\"channels\":[";
+  if (m_config != nullptr) {
+    for (size_t i = 0; i < m_config->notifyChannelCount(); i++) {
+      if (i > 0) out += ",";
+      const NotifyChannel& ch = m_config->notifyChannelAt(i);
+      const uint8_t chSlot = static_cast<uint8_t>(i + 1);
+      out += "{\"label\":\"";
+      out += ch.label;
+      out += "\",\"on\":";
+      out += ch.enabled ? "true" : "false";
+      out += ",\"style\":\"";
+      out += (ch.style == 0 ? "get" : (ch.style == 1 ? "post_text" : "post_json"));
+      out += "\",\"url\":\"";
+      out += AppConfig::maskUrl(ch.url);
+      out += "\",\"accounts\":\"";
+      out += ch.accountsCsv;
+      out += "\",\"sentToday\":";
+      out += String(static_cast<unsigned>(chSlot < kChannelSlots ? m_sentTodayCh[chSlot] : 0));
+      out += "}";
+    }
+  }
+  out += "]}";
   return out;
 }

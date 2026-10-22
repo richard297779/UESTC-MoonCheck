@@ -218,18 +218,24 @@ code=123456                          // 纯文本形式（同样接受）
 
 | 指令 | 参数 | 说明 |
 | --- | --- | --- |
-| `notify.set` | `url`,`style`,`on`,`gap_s`,`quota` | 全部可选，只改给出的项；`style` = `0` GET 模板 / `1` POST 纯文本 / `2` POST JSON（默认 2）；`gap_s` 重试通知最小间隔秒（默认 60）；`quota` 每日条数上限（默认 40，`0`＝不限） |
-| `notify.status` | — | 回 `{"on":..,"style":..,"url":"<脱敏>","gap":..,"quota":..,"sentToday":..,"queued":..,"retryCount":..}` |
-| `test.notify` | `body` | 立刻真发一条 `Info` 事件（绕过队列、去重与配额），回执带 HTTP 状态与响应摘要 |
+| `notify.set` | `url`,`style`,`on`,`gap_s`,`quota` | 配置**默认通道**；全部可选，只改给出的项；`style` = `0` GET 模板 / `1` POST 纯文本 / `2` POST JSON（默认 2）；`gap_s` 重试通知最小间隔秒（默认 60）；`quota` 每日条数上限（默认 40，`0`＝不限，0.4.0 起**按通道独立**计数） |
+| `notify.add` | `label`,`url`,`style?`,`on?`,`accounts?` | **0.4.0 起**：新增/更新一条附加通道（最多 5 条）。`accounts` = 数组或逗号串（如 `["A01","A02"]` / `"A01,A02"`），缺省＝`all` |
+| `notify.remove` | `label` | 删除附加通道 |
+| `notify.enable` | `label`,`on` | 单通道开关（保留 url） |
+| `notify.link` | `label`,`accounts` | 修改通道的账号关联 |
+| `notify.status` | — | 回 `{"on":..,"style":..,"url":"<脱敏>","gap":..,"quota":..,"sentToday":<合计>,"queued":..,"retryCount":..,"channels":[{"label","on","style","url","accounts","sentToday"}..]}`（`channels` 数组 0.4.0 起） |
+| `test.notify` | `body`,`chan?` | 立刻真发一条 `Info`（绕过队列、去重与配额），回执带 HTTP 状态与响应摘要；`chan`=标签定向附加通道，缺省默认通道 |
+
+**路由规则**（固件 `NotifyTarget`，与桌面版 `push.fan_out` 一致）：默认通道收全局事件（摘要/断网/窗口关闭）+ 单账号动作结果 + 多人轮**汇总**；附加通道只收 `accounts` 关联账号的**逐账号结果**（`all`＝所有账号但不收汇总）；去重键按通道加 `c<idx>|` 前缀，同一账号同日只推一条「打卡成功」，失败每 3 轮 1 条。
 
 **实际推送时机**（BLE 事件 `evt.notify` 是同一批内容的本地镜像）：
 
 | 事件 | 时机 | 频次上限 |
 | --- | --- | --- |
 | `StatusDigest` | 每天窗口起点 21:00 的账号表体检之后（0 个人生效也发，摘要里写清楚） | 1 条/天 |
-| `CheckinOk` | 定时全部生效账号成功（**一条汇总**）；手动补打成功/今日已打过 | 1 条/天 |
+| `CheckinOk` | 定时全部生效账号成功（**一条汇总**走默认通道；0.4.0 起逐账号结果另发关联通道）；手动补打成功/今日已打过 | 1 条/天/通道/账号 |
 | `CheckinFail` | 本轮未全成功（正文含逐人结果与「将在 3 分钟后重试」） | 每 3 轮 1 条 |
-| `DeadlineMissed` | 23:30 窗口关闭仍未成功 | 1 条/天 |
+| `DeadlineMissed` | 23:30 窗口关闭仍未成功（全局 1 条；0.4.0 起未打卡账号各 1 条进其关联通道） | 1 条/天/账号 |
 | `NeedMfa` | 登录要求二次验证（窗口内无法处理） | 1 条/天 |
 | `NetDown` | Wi-Fi 连接失败 | 1 条/小时 |
 
@@ -239,8 +245,12 @@ code=123456                          // 纯文本形式（同样接受）
 
 ```jsonc
 {"op":"notify.set","id":9,"url":"https://api.day.app/<你的KEY>/{title}/{body}","style":0,"on":1}
+{"op":"notify.add","id":12,"label":"A02url","url":"https://sctapi.ftqq.com/<他的SendKey>.send","style":2,"accounts":["A02"]}
+{"op":"notify.link","id":13,"label":"A02url","accounts":"A02,A03"}
+{"op":"notify.enable","id":14,"label":"A02url","on":0}
+{"op":"notify.remove","id":15,"label":"A02url"}
 {"op":"notify.status","id":10}
-{"op":"test.notify","id":11,"body":"manual test"}
+{"op":"test.notify","id":11,"body":"manual test","chan":"A02url"}
 ```
 ---
 
