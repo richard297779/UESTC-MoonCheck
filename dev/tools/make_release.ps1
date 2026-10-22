@@ -561,6 +561,10 @@ foreach ($name in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_
 
 Push-Location -LiteralPath $repoDir
 try {
+    # gh/git 把探测结果和进度写在 stderr 上（比如查一个还不存在的 Release）；
+    # Stop 模式下 PowerShell 5.1 会把这些 stderr 行升级成 NativeCommandError 终止脚本。
+    # 上传段整体改用 Continue，成败一律看 $LASTEXITCODE。
+    $ErrorActionPreference = 'Continue'
     Info ("仓库目录：$repoDir")
 
     $exists = $false
@@ -602,6 +606,7 @@ try {
     if ($url) { Write-Host ('  ' + $url) -ForegroundColor Green }
     foreach ($f in $uploadFiles) { Info ('  已上传 ' + (Split-Path -Leaf $f)) }
 } finally {
+    $ErrorActionPreference = 'Stop'
     Pop-Location
     foreach ($name in $savedProxy.Keys) { Set-Item -LiteralPath ("env:" + $name) -Value $savedProxy[$name] }
 }

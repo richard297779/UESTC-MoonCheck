@@ -18,7 +18,7 @@ firmware/.pio/
 .pio/
 .pioenvs/
 .piolibdeps/
-release/s3-full/
+release/s3-n16r8-full/
 release/wroom32-4mb-full/
 release.bak-*/
 release/MoonCheck-*
