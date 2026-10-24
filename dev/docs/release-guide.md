@@ -327,7 +327,7 @@ WiFi、账号表、坐标、通知地址都会回到默认值。
 
 ## 7. 【使用者】刷完后的蓝牙配置（11 项，一次做完）
 
-网页工具**只负责刷固件**，配置要走蓝牙（BLE）。这一步无法省掉——密码和指纹必须进设备。要使用新微信票据流程，必须从当前源码编译；Releases 中的 v0.4.0 固件不支持该流程。每个账号还需准备本人授权的微信凭据，仓库目前不提供获取初始凭据的工具。
+网页工具**只负责刷固件**，配置要走蓝牙（BLE）。这一步无法省掉——密码和指纹必须进设备。要使用新微信票据流程，必须从当前源码编译；Releases 中的 v0.4.0 固件不支持该流程。每个账号还需由本人通过 PC 端 QR Connect 扫码并从 DevTools Cookie 中读取凭据，步骤与 `expires_in` 换算见[快速开始](../../docs/quickstart.md#22-准备微信授权凭据)。
 
 ### 7.1 用电脑（推荐）
 
@@ -349,14 +349,14 @@ python tools\ble_console.py --name WANAN-1A2B
 wifi UESTC-WiFi                          # 开放网络省略密码；普通网络写 wifi <ssid> <pass>
 netcheck                                 # 出现 204 才算放行；302/HTML 说明还要网页认证
 auth <学号> <密码> <浏览器指纹>            # 指纹见 7.3
-raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+wx import 0 <openid> <accesstoken> <refreshtoken> 0
 loc <纬度> <经度> <地址>                # 必须在宿舍现场实测（取法见 7.2）
 sched 22:00 23:30 30                     # 打卡时间 / 窗口截止 / 抖动
 auto on                                  # 打开每日自动
 notify set url=<你的推送地址> style=0     # 手机通知；Bark 用 0，ntfy 用 1，自建中转用 2
 notify test 你好                          # 手机应立刻收到一条「[WANAN-xxxx] 通知」
-raw {"op":"wx.status"}                  # 确认微信凭据槽位
-raw {"op":"wx.test","slot":0}           # 换票链路测试，不提交打卡
+wx status                               # 确认微信凭据槽位
+wx test 0                               # 换票链路测试，不提交打卡
 ```
 
 多人（可选）：
@@ -373,7 +373,7 @@ multi probe force                              # 窗口外完整演练（只体�
 ```
 status          # 看 wifiConfigured / user / fingerprintSet / schedule / notifyOn
 chain 0         # loginPage→登录→进入打卡界面→业务接口自测；不检查微信票据
-raw {"op":"wx.test","slot":0} # 单独验证微信票据获取
+wx test 0 # 单独验证微信票据获取
 probe           # 只读体检：h5Reached / sessionValid / inWindow / 今日状态
 ```
 

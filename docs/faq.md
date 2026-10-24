@@ -90,9 +90,7 @@ Windows 设置 → 蓝牙 → 删除该设备后重连；或用 `tools/clear_ble
 `MULTIFACTOR_BROWSER_FINGERPRINT`，再 `auth` 重新写入。它与下方微信操作票据是两项不同的授权。
 
 **打卡提示 `wx ticket failed`、`wx.import needed` 或微信换票失败**
-平台要求打卡请求携带微信小程序操作票据。先执行 `raw {"op":"wx.status"}` 检查当前账号对应槽位，再用
-`raw {"op":"wx.test","slot":0}` 测试（按实际槽位调整）。缺少凭据时，按[快速开始](quickstart.md)导入本人授权的 `openid`、`access`、
-`refresh`、`expiresAt`；若刷新被拒绝，需重新获取并导入凭据。`chain` 不检查微信票据。
+平台要求打卡请求携带微信小程序操作票据。在 `ble_console.py` 中先执行 `wx status` 检查当前账号对应槽位，再用 `wx test 0` 测试（按实际槽位调整）。缺少凭据时，按[快速开始](quickstart.md#22-准备微信授权凭据)由账号本人扫码读取 Cookie 并用 `wx import` 导入；注意 `expires_in` 是剩余秒数，须换算为 Unix 到期时间 `expiresAt`，也可填 `0` 让固件先刷新。若刷新被拒绝，需重新扫码并导入；`chain` 不检查微信票据。
 
 > GitHub Releases 中已发布的 v0.4.0 预编译固件不包含微信票据支持。当前源码版本为 v0.5.0；在 v0.5.0 Release 发布前，请从当前源码编译。不要仅凭旧设备报告的版本号判断是否包含此功能。
 

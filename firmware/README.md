@@ -55,15 +55,15 @@ pio device monitor --port COM5               # 串口日志，115200
 
 平台已要求打卡请求携带 `X-Checkin-Ticket`。当前源码会在打卡前自动通过微信小程序授权链获取短效票据，不需要手工获取或填写票据本身。账号的 CAS 登录配置（学号、密码、可选浏览器指纹）仍然需要保留。
 
-每个使用中的账号都需要本人授权的微信凭据（`openid`、`access`、`refresh`、`expiresAt`，Unix 秒）。仓库目前不包含获取初始凭据的工具；请勿使用他人凭据。通过 `ble_console.py` 的 `raw` 命令导入并测试：
+每个使用中的账号都需要本人通过 PC 端 QR Connect 扫码授权取得微信凭据。授权 URL、Cookie 获取位置及字段映射见[快速开始](../docs/quickstart.md#22-准备微信授权凭据)。Cookie 中 `openid`、`accesstoken`、`refreshtoken` 分别填入 `openid`、`access`、`refresh`；`expires_in` 是剩余秒数，需加当前 Unix 时间换算为绝对 Unix 到期时间 `expiresAt`，也可设为 `0` 令固件首次使用前刷新并保存到期时间。按账号表顺序为每位账号分别授权，切勿共用他人凭据。在 `ble_console.py` 中使用快捷命令导入并测试：
 
 ```text
-raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
-raw {"op":"wx.status"}
-raw {"op":"wx.test","slot":0}
+wx import 0 <openid> <accesstoken> <refreshtoken> 0
+wx status
+wx test 0
 ```
 
-账号表为空时设备主账号使用槽位 0；账号表非空时，微信凭据槽位按账号表顺序对应（从 0 开始）。凭据保存在 NVS，刷新后会自动保存；刷新被拒绝时需由账号本人重新获取并导入。`chain` 只验证 CAS / 微应用链路，不能代替 `raw {"op":"wx.test","slot":0}`。
+账号表为空时设备主账号使用槽位 0；账号表非空时，微信凭据槽位按账号表顺序对应（从 0 开始）。凭据保存在 NVS，刷新后会自动保存；刷新被拒绝时需由账号本人重新扫码并导入。`chain` 只验证 CAS / 微应用链路，不能代替 `wx test 0`。
 
 > Releases 中的 v0.4.0 预编译固件早于此改动，不支持 `wx.*` 指令。当前源码的固件版本字符串仍为 `0.4.0`，请从当前源码编译，不要仅凭版本号判断功能。
 

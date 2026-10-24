@@ -56,7 +56,7 @@ GitHub Releases 中已发布的 v0.4.0 预编译固件不含新的微信票据�
 | 值 | 怎么取 |
 | --- | --- |
 | 浏览器指纹 | 用于 CAS 登录免短信验证：Chrome 登录 `jzsz.uestc.edu.cn` → F12 → Application → Cookies → `https://idas.uestc.edu.cn` → `MULTIFACTOR_BROWSER_FINGERPRINT`（32 位十六进制） |
-| 微信授权凭据 | 每个打卡账号需要 `openid`、`access`、`refresh`、`expiresAt`；由本人授权获得。仓库目前不提供获取这些初始凭据的工具。 |
+| 微信授权凭据 | 每个账号由本人通过 PC 端 QR Connect 扫码授权获取；操作步骤与字段转换见[快速开始](docs/quickstart.md#22-准备微信授权凭据)。 |
 | 宿舍坐标 | 人在宿舍打开晚安成电页面 → F12 → Network 过滤 `reverse` → 从 `map/reverse?lat=…&lng=…` 读取 |
 
 浏览器指纹是 HttpOnly，`document.cookie` 看不到；必须用你**平时打卡的那台浏览器**。微信授权凭据与密码同等敏感，只能导入本人账号并妥善保管。
@@ -74,13 +74,13 @@ python tools/ble_console.py --name WANAN-XXXX
 ```text
 wifi <WiFi名> <WiFi密码>
 auth <学号> <密码> <指纹>
-raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":<Unix秒>}
+wx import 0 <openid> <accesstoken> <refreshtoken> 0
 loc <纬度> <经度> 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
 ```
 
-`expiresAt` 使用 Unix 时间戳（秒）。执行 `raw {"op":"wx.status"}` 确认槽位已保存，再用 `raw {"op":"wx.test","slot":0}` 测试微信授权链；`wx.test` 只取票、不提交打卡。多人账号按账号表顺序分别导入槽位 0–5，见[多人打卡](docs/multi-account.md)。
+`expiresAt` 使用 Unix 绝对时间（秒）；扫码 Cookie 的 `expires_in` 是剩余秒数，需加当前 Unix 时间换算，也可填 `0` 让固件首次使用前刷新（推荐）。扫码及 Cookie 提取步骤见[快速开始](docs/quickstart.md#22-准备微信授权凭据)。复制 Cookie 后、导入前关闭 QR Connect 页面，确保同一授权只有开发板一个客户端保活。在 `ble_console.py` 中执行 `wx status` 确认槽位已保存，再用 `wx test 0` 测试微信授权链；该测试只取票、不提交打卡。多人账号按账号表顺序分别导入槽位 0–5，见[多人打卡](docs/multi-account.md)。
 
 ### 4. 验证
 
@@ -89,7 +89,7 @@ chain 0
 ```
 
 看到 `appEntry: true` 就说明平台已授权这台设备。白天 `inWindow: false` 是正常的。
-`chain` 不检查微信票据；新源码还应确认 `raw {"op":"wx.test","slot":0}` 成功。
+`chain` 不检查微信票据；新源码还应确认 `wx test 0` 成功。
 
 21:00–23:30 之间可以手动打一次：
 

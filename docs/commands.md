@@ -18,7 +18,7 @@ python tools/ble_console.py --name WANAN-XXXX
 | --- | --- |
 | `wifi <ssid> [密码]` | 连接 2.4 GHz WiFi；成功后自动校时 |
 | `auth <学号> <密码> [指纹]` | 配置主账号；指纹可选但强烈建议填 |
-| `raw {"op":"wx.import",...}` | 导入本人微信授权凭据；供新版固件获取打卡操作票据 |
+| `wx import <slot> <openid> <access> <refresh> <expiresAt>` | 导入本人微信授权凭据（`ble_console.py` 快捷命令） |
 | `loc <纬度> <经度> [地址…]` | 配置打卡坐标，地址只用于显示 |
 | `sched <打卡时间> [窗口结束] [抖动秒]` | 例：`sched 22:00 23:30 30` |
 | `auto [on\|off]` | 开关每日自动打卡（不带参数等于 `on`） |
@@ -29,7 +29,7 @@ python tools/ble_console.py --name WANAN-XXXX
 ```text
 wifi Dorm-2.4G mywifi123
 auth 2023XXXXXXX mypassword 0123456789ABCDEF0123456789ABCDEF
-raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+wx import 0 <openid Cookie> <accesstoken Cookie> <refreshtoken Cookie> 0
 loc 30.753456 103.934123 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
@@ -50,15 +50,17 @@ wx status
 wx test 0
 ```
 
-`wx import` 的令牌会发送给设备，但不会显示在控制台回显中。使用 nRF Connect 等原始 BLE 客户端时，请改用下方 JSON 指令。
+`wx import` 的令牌会发送给设备，但不会显示在控制台回显中。使用 nRF Connect 等原始 BLE 客户端时，请将下方 JSON 指令发送到设备；在 `ble_console.py` 中则使用对应的 `wx` 快捷命令。
 
-| 操作 | 命令（`ble_console.py`）/ JSON 指令 | 说明 |
+| 操作 | `ble_console.py` 快捷命令 | 原始 BLE JSON 指令（如 nRF Connect） | 说明 |
 | --- | --- | --- |
-| 导入 | `raw {"op":"wx.import","slot":0,"openid":"…","access":"…","refresh":"…","expiresAt":<Unix秒>}` | 保存本人授权的微信凭据到槽位 0–5；刷新后会自动更新凭据 |
-| 查看摘要 | `raw {"op":"wx.status"}` | 仅显示各槽位是否有效及过期时间，不返回凭据明文 |
-| 测试 | `raw {"op":"wx.test","slot":0}` | 执行换票链路但不提交打卡 |
+| 导入 | `wx import <slot> <openid> <access> <refresh> <expiresAt>` | `{"op":"wx.import","slot":0,"openid":"…","access":"…","refresh":"…","expiresAt":<Unix秒>}` | 保存本人授权的微信凭据到槽位 0–5；刷新后会自动更新凭据 |
+| 查看摘要 | `wx status` | `{"op":"wx.status"}` | 仅显示各槽位是否有效及过期时间，不返回凭据明文 |
+| 测试 | `wx test [slot]` | `{"op":"wx.test","slot":0}` | 执行换票链路但不提交打卡；快捷命令默认槽位 0 |
 
-`expiresAt` 为 Unix 秒。账号表为空时主账号使用槽位 0；账号表非空时，账号按表内顺序对应槽位 0–5。删除账号会使后续账号位置前移，因此应重新导入受影响槽位的凭据。每个账号必须使用本人同意提供的凭据。仓库目前不提供获取初始凭据的工具；请将其视为密码保管。
+`expiresAt` 为绝对 Unix 时间（秒）。扫码地址和 Cookie 获取位置见[快速开始](quickstart.md#22-准备微信授权凭据)。Cookie 的 `openid`、`accesstoken`、`refreshtoken` 分别填入 `openid`、`access`、`refresh`；`expires_in` 是剩余秒数，须加当前 Unix 时间换算成 `expiresAt`（也可传 `0` 让设备首次使用前刷新）。账号表为空时主账号使用槽位 0；账号表非空时，账号按表内顺序对应槽位 0–5。删除账号会使后续账号位置前移，因此应重新导入受影响槽位的凭据。每个账号必须由本人扫码授权，妥善保管令牌。
+
+**导入开发板前关闭完成扫码的 QR Connect 页面。** 同一组微信授权凭据应只由一个客户端保活，避免扫码页面或其他程序与设备同时刷新令牌。
 
 ---
 
@@ -84,7 +86,7 @@ wx test 0
 | `login [force]` | 登录。窗口外默认跳过（保护会话），`force` 强制 |
 | `probe` | 只读体检：不登录、不打卡，只看平台会话是否可用 |
 | `chain [秒] [force]` | 全链路自检：登录页 → 会话 → H5 → 门户预热 → 进入微应用 |
-| `raw {"op":"wx.test","slot":0}` | 测试指定账号槽位的微信授权换票链路，不提交打卡 |
+| `wx test [slot]` | 测试指定账号槽位的微信授权换票链路，不提交打卡（默认槽位 0） |
 | `checkin [force]` | 提交打卡。只在 21:00–23:30 有效；成功后自动复查 |
 | `http <url>` | 用设备网络发一次 GET，排查 DNS / TLS / 代理 |
 | `raw <json>` | 直接发送 JSON |
@@ -117,7 +119,7 @@ wx test 0
 | `canCheckin` | 现在是否能直接打卡 |
 
 白天看到 `inWindow: false` 是完全正常的。
-`chain` 检查 CAS / 微应用链路，不检查微信票据；对当前源码还应单独运行 `raw {"op":"wx.test","slot":0}`。
+`chain` 检查 CAS / 微应用链路，不检查微信票据；使用 `ble_console.py` 时还应单独运行 `wx test 0`。
 
 ---
 

@@ -66,7 +66,44 @@ python -m pip install bleak
 
 新版固件在提交打卡前，会使用微信小程序授权链向平台换取短效操作票据。每个账号需要本人授权得到的 `openid`、`access`、`refresh` 和 `expiresAt`（Unix 时间戳，秒）。
 
-> 当前仓库未包含获取初始微信授权凭据的工具或操作流程；请勿使用他人的凭据，也不要把凭据发到聊天、截图或提交到 Git。固件会在设备 NVS 中保存这些凭据。
+1. 在电脑浏览器打开以下 QR Connect 页面。核对地址栏主机名为 `open.weixin.qq.com` 且连接为 HTTPS：
+
+   ```text
+   https://open.weixin.qq.com/connect/qrconnect?appid=wxd44977328b36e647&redirect_uri=https%3A%2F%2Fyybadaccess.3g.qq.com%2Fpc_yyb%2Fpcyyb_oauth%3Flogin_type%3DWX&response_type=code&scope=snsapi_login,snsapi_runtime_pcsdk&state=web&fast_login=1&self_redirect=true
+   ```
+
+2. 用**将用于打卡的微信账号本人**扫码并在微信中确认授权。每个打卡账号都需分别授权一次。
+3. 授权完成后，在该页面按 **F12** 打开 Chrome DevTools，选择 **Application（应用程序）→ Cookies**，在左侧展开框架/来源，选中 `static.pc.yyb.qq.com`。协议可能显示为 `http://` 或 `https://`，以 DevTools 中该域名实际列出的来源为准；不要选顶层页面或其他域名下的 Cookie。
+4. 在右侧 Cookie 表中分别找到并复制 `openid`、`accesstoken`、`refreshtoken`、`expires_in` 四项的 **Value**。不要把值截图、发给他人或粘贴到不可信网页。上游 [MoonCheck-WX 快速开始](https://github.com/muyuhuanghun/MoonCheck-WX#快速开始)介绍了 QR Connect 凭据的用途；更多技术背景见上游[技术报告](https://github.com/muyuhuanghun/MoonCheck-WX/blob/main/docs/TECHNICAL-REPORT.md)。
+
+**导入到开发板前，先关闭完成扫码授权的 QR Connect 页面/标签页。** 同一组微信授权凭据应始终只由一个客户端保活；不要让扫码页面、其他电脑程序和开发板同时使用或刷新这组凭据。多人配置时，每个账号依次单独扫码、复制凭据并关闭对应页面，再导入该账号的槽位。
+
+字段对应关系：
+
+| Cookie 名 | `wx.import` 字段 | 说明 |
+| --- | --- | --- |
+| `openid` | `openid` | 微信用户标识 |
+| `accesstoken` | `access` | 访问令牌 |
+| `refreshtoken` | `refresh` | 刷新令牌；可能轮换，务必保密 |
+| `expires_in` | 用于计算 `expiresAt` | 剩余有效秒数，不是 Unix 时间戳，**不可直接照抄** |
+
+固件要求 `expiresAt` 是 Unix 绝对时间（秒），所以将当前 Unix 时间加上 `expires_in`。例如 Cookie 值为 `7200` 时，在 PowerShell 中运行以下命令，将 `7200` 替换成你读到的值，再把输出填入 `expiresAt`：
+
+```powershell
+[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 7200
+```
+
+如果不方便换算，也可先填 `0`；固件会在首次使用前刷新凭据并保存服务端返回的有效期和轮换后的令牌。
+
+示例导入（把占位符替换为本人 Cookie 值；`expiresAt` 使用上一步算出的 Unix 秒）：
+
+```text
+wx import 0 <openid> <accesstoken> <refreshtoken> 0
+wx status
+wx test 0
+```
+
+`wx.test` 会测试刷新/换票链路，但不会提交打卡。成功后固件会将刷新后的凭据保存在设备 NVS 中；refresh token 可能轮换，之后继续由这块开发板使用设备内保存的新值，不要让已关闭的扫码页面或其他客户端再次保活/刷新旧值，也不要重复导入旧值。若刷新被拒绝，需由账号本人重新扫码授权并导入。微信令牌等同登录凭据：仅授权给本人设备、妥善保管；设备遗失时在应用宝授权管理中撤销授权。不要分享、截图、上传网盘或提交到 Git。
 
 ---
 
@@ -114,7 +151,7 @@ python tools/ble_console.py --name WANAN-XXXX
 ```text
 wifi <宿舍WiFi名> <WiFi密码>
 auth <学号> <密码> <第 2.1 步取到的指纹>
-raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":<Unix秒>}
+wx import 0 <openid Cookie> <accesstoken Cookie> <refreshtoken Cookie> 0
 loc <纬度> <经度> 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
@@ -125,7 +162,7 @@ auto on
 ```text
 wifi Dorm-2.4G mywifi123
 auth 2023XXXXXXX ************ 0123456789ABCDEF0123456789ABCDEF
-raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+wx import 0 <openid> <accesstoken> <refreshtoken> 0
 loc 30.753456 103.934123 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
@@ -136,7 +173,7 @@ auto on
 | WiFi | **必须 2.4 GHz**，板子不支持 5 GHz。不确定先输 `scan`，看你的 SSID 的 `channel` 是否在 1–13 |
 | WiFi 名或密码含空格 | 用原始指令：`raw {"op":"wifi.set","ssid":"我的 WiFi","pass":"a b#c"}` |
 | 指纹 | 用于 CAS 登录；如未配置或失效，登录仍可能要求短信验证码 |
-| 微信凭据 | 每个账号单独导入；`expiresAt` 是 Unix 秒。用 `raw {"op":"wx.status"}` 查看槽位摘要，不会回显凭据明文 |
+| 微信凭据 | `expires_in` 是剩余秒数，须加当前 Unix 时间换算为 `expiresAt`，或填 `0` 由固件首次使用时刷新；用 `wx status` 查看槽位摘要，不会回显凭据明文 |
 | `loc` 第三个参数 | 地址文本，可随意填，只影响打卡记录里显示的地点 |
 | `sched` | 依次为：打卡时间、窗口结束、随机抖动秒数 |
 
@@ -183,7 +220,7 @@ chain 0
 
 ![chain 0 验证通过](assets/quickstart/10-chain-ok.png)
 
-`chain` 不检查微信票据。另用 `raw {"op":"wx.status"}` 确认凭据已导入，并运行 `raw {"op":"wx.test","slot":0}`（多人时按对应槽位调整）；若测试失败，查看错误回执和 `logs`，凭据刷新被拒绝时由账号本人重新获取并导入。
+`chain` 不检查微信票据。另用 `wx status` 确认凭据已导入，并运行 `wx test 0`（多人时按对应槽位调整）；若测试失败，查看错误回执和 `logs`，凭据刷新被拒绝时由账号本人重新扫码并导入。
 
 ### 6.2 手动打一次卡
 
@@ -203,7 +240,7 @@ checkin
 | `already checked in` | 今天已经打过 | 正常，不会重复提交 |
 | `OUT_OF_WINDOW` | 不在 21:00–23:30 | 到点再试 |
 | `NEED_MFA` | 服务端要验证码 | 指纹不对，回第 2 步重新取 |
-| `wx ticket failed` / 缺少微信凭据 | 未能取得打卡操作票据 | 按账号槽位导入微信凭据，执行 `raw {"op":"wx.test","slot":0}` 验证；`chain` 不会检查票据 |
+| `wx ticket failed` / 缺少微信凭据 | 未能取得打卡操作票据 | 按账号槽位用 `wx import` 导入微信凭据，执行 `wx test 0` 验证；`chain` 不会检查票据 |
 | `APP_UNAVAILABLE` / `pending` | 会话未授权 | 等设备自动重试，或 `login` 后再 `checkin` |
 | `distance` 很大 / 记录异常 | 坐标不对 | 回第 3 步重新取坐标，再 `loc` |
 
@@ -236,7 +273,7 @@ status
 ## 8. 安全提醒
 
 - 学号密码、浏览器指纹和微信授权凭据都属于敏感凭据。只导入本人账号并妥善保管，不要发群或上传网盘 / GitHub。
-- 凭据保存在设备 NVS；`status` 输出会脱敏学号，密码和指纹只报是否已设置。微信凭据摘要可用 `raw {"op":"wx.status"}` 查看，不回显令牌。
+- 凭据保存在设备 NVS；`status` 输出会脱敏学号，密码和指纹只报是否已设置。微信凭据摘要可用 `wx status` 查看，不回显令牌。
 - 设备只调用学校打卡接口，不要拿它做其他用途。
 - 把板子放在宿舍 WiFi 信号好的位置长期通电即可，不需要移动。
 
