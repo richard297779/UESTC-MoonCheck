@@ -162,7 +162,7 @@ String Logger::tail(uint16_t maxLines) const {
   for (uint16_t i = 0; i < lines; i++) {
     const uint16_t index =
         static_cast<uint16_t>((m_head + AppConst::kLogRingLines - lines + i) % AppConst::kLogRingLines);
-    out += m_ring[static_cast<size_t>(index) * AppConst::kLogLineMax];
+    out += &m_ring[static_cast<size_t>(index) * AppConst::kLogLineMax];
     if (i + 1 < lines) out += '\n';
   }
   return out;

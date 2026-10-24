@@ -91,6 +91,41 @@ class CheckinApi {
   Result submitCheckin(double latitude, double longitude, const String& address,
                        const String& clientTime, HttpResponse& rawResponse);
 
+  // ---- 微信小程序授权链（platform-app，platform: mp-weixin）----
+
+  /// @brief check-bind：用一个新 wx.login code 建立小程序会话。
+  /// @param code 微信 js-login 取得的一次性 code（app端 MMTLS 取码）。
+  /// @param[out] outBind 是否已绑定学校账号。
+  /// @param[out] outSessionId 小程序 SESSION（与 H5 SESSION 独立，短期使用）。
+  /// @note 请求不需要已有会话；wx code 本身就是凭证。
+  Result checkWechatBind(const String& code, bool& outBind, String& outSessionId);
+
+  /// @brief checkin-ticket：用另一个新 wx code + 小程序 SESSION 换操作票据。
+  /// @param mpSessionId checkWechatBind 返回的小程序 SESSION。
+  /// @param[out] outTicket 43 字符操作票据（约 30 分钟）。
+  /// @note 响应须 ok==true（小程序端信封），不能只看 code==0。
+  Result requestCheckinTicket(const String& code, const String& mpSessionId,
+                              String& outTicket);
+
+  /// @brief 安装操作票据并记录属主（账号学号）与安装时间。
+  void setOperationTicket(const String& ticket, const String& owner) {
+    m_operationTicket = ticket;
+    m_ticketOwner = owner;
+    m_ticketAtMs = millis();
+  }
+  /// @brief 清除票据（收到 46001/46002/46003 时调用，下次重取）。
+  void clearOperationTicket() {
+    m_operationTicket = "";
+    m_ticketOwner = "";
+  }
+  /// @brief 是否持有指定属主的新鲜票据（默认 25 min 内；票据实测 ~30 min 有效）。
+  bool hasFreshTicketFor(const String& owner, uint32_t maxAgeMs = 25UL * 60 * 1000) const {
+    if (m_operationTicket.length() != 43 || m_ticketOwner != owner) return false;
+    return static_cast<uint32_t>(millis() - m_ticketAtMs) < maxAgeMs;
+  }
+  /// @brief 当前是否持有操作票据。
+  bool hasOperationTicket() const { return m_operationTicket.length() > 0; }
+
   /// @brief 组装打卡载荷（与实测成功载荷逐字段一致，不做裁剪）。
   static String buildCheckinPayload(double latitude, double longitude, const String& address,
                                     const String& clientTime);
@@ -100,7 +135,11 @@ class CheckinApi {
 
  private:
   /// @brief 为请求追加微应用必需的请求头。
-  static void addH5Headers(HttpRequest& request);
+  void addH5Headers(HttpRequest& request);
+  /// 当前票据；enterApp 仅清除过期票据（集中流程要求 21:00 取号、21:20 使用）。
+  String m_operationTicket;
+  String m_ticketOwner;
+  uint32_t m_ticketAtMs = 0;
   /// @brief GET 一个业务接口并校验 HTTP 状态。
   Result getJson(const String& path, HttpResponse& response);
 

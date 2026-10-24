@@ -12,6 +12,33 @@ namespace {
 
 const char* const kTag = "checkin_api";
 
+// 仅接受本站 H5 URL 的参数；拒绝控制字符，避免把 URL 内容注入 HTTP 头。
+String operationTicketFromUrl(const String& url) {
+  if (!url.startsWith(String(AppConst::kJzszBaseUrl) + "/daily-checkin-h5/")) return String();
+  const int question = url.indexOf('?');
+  if (question < 0) return String();
+  int start = question + 1;
+  while (start < static_cast<int>(url.length())) {
+    int end = url.indexOf('&', start);
+    if (end < 0) end = url.length();
+    const String pair = url.substring(start, end);
+    if (pair.startsWith("checkinTicket=")) {
+      String encoded = pair.substring(14);
+      const int hash = encoded.indexOf('#');
+      if (hash >= 0) encoded = encoded.substring(0, hash);
+      String ticket = HttpClient::urlDecode(encoded);
+      if (ticket.length() == 0 || ticket.length() > 2048) return String();
+      for (size_t i = 0; i < ticket.length(); ++i) {
+        if (static_cast<uint8_t>(ticket[i]) <= 0x20 ||
+            static_cast<uint8_t>(ticket[i]) >= 0x7f) return String();
+      }
+      return ticket;
+    }
+    start = end + 1;
+  }
+  return String();
+}
+
 /// @brief 业务路径（契约 §2）。
 constexpr const char* kPathEnterApp = "/daily-checkin/checkLogin?appId=294";
 /// @brief 门户"登录态初始化"接口：微应用授权的前提（见 CheckinApi::warmUpPortal）。
@@ -72,6 +99,7 @@ Result CheckinApi::begin(HttpClient& http) {
 }
 
 void CheckinApi::addH5Headers(HttpRequest& request) {
+  if (m_operationTicket.length() > 0) request.addHeader("X-Checkin-Ticket", m_operationTicket);
   request.addHeader("Platform", "h5");
   request.addHeader("Accept", "*/*");
   request.addHeader("Origin", AppConst::kJzszBaseUrl);
@@ -106,6 +134,12 @@ Result CheckinApi::getJson(const String& path, HttpResponse& response) {
 }
 
 Result CheckinApi::enterApp(bool* outReachedH5, String* outFinalUrl, int* outStatus) {
+  // 集中流程：21:00 取的票要在 21:20 使用；这里只清过期票据（>25 min）
+  if (m_operationTicket.length() > 0 &&
+      static_cast<uint32_t>(millis() - m_ticketAtMs) >= 25UL * 60 * 1000) {
+    m_operationTicket = "";
+    m_ticketOwner = "";
+  }
   if (m_http == nullptr) return Result::NotReady;
 
   HttpRequest request;
@@ -127,16 +161,23 @@ Result CheckinApi::enterApp(bool* outReachedH5, String* outFinalUrl, int* outSta
   HttpResponse response;
   const Result result = m_http->requestFollow(request, response, 4);
   // 先把"302 去了哪"暴露出去：这是判断问题在设备侧还是平台侧的唯一硬证据
-  if (outFinalUrl != nullptr) *outFinalUrl = response.url;
+  if (outFinalUrl != nullptr) *outFinalUrl = HttpClient::logUrl(response.url);
   if (outStatus != nullptr) *outStatus = response.status;
   if (result != Result::Ok) return result;
 
   // 实测：打卡窗口内会落到 /daily-checkin-h5/index.html?appId=294；
   //       窗口外会被 302 退回平台首页（此时业务接口会返回 4001 登录无效或已过期）。
   const bool reachedH5 = response.url.indexOf("/daily-checkin-h5/") >= 0;
+  if (reachedH5 && response.status == 200) {
+    // URL 带票据时才覆盖（小程序入口场景）；设备 CAS 入口 URL 无票据参数，
+    // 不能把预取/现场取得的票据清掉（2026-10-24 实测：21:00 取号被此行冲掉）
+    const String fromUrl = operationTicketFromUrl(response.url);
+    if (fromUrl.length() > 0) m_operationTicket = fromUrl;
+  }
   if (outReachedH5 != nullptr) *outReachedH5 = reachedH5;
   LOG_I(kTag, "entered micro app: http %d, h5=%d, final=%s", response.status, reachedH5 ? 1 : 0,
-        response.url.c_str());
+        HttpClient::logUrl(response.url).c_str());
+  LOG_I(kTag, "operation ticket from entry: %s", m_operationTicket.length() ? "present" : "missing");
   if (response.status != 200 && response.status != 302) return Result::HttpError;
   if (!reachedH5) return Result::ApiChanged;
   return Result::Ok;
@@ -327,6 +368,10 @@ String CheckinApi::buildCheckinPayload(double latitude, double longitude, const 
 Result CheckinApi::submitCheckin(double latitude, double longitude, const String& address,
                                  const String& clientTime, HttpResponse& rawResponse) {
   if (m_http == nullptr) return Result::NotReady;
+  if (m_operationTicket.length() == 0) {
+    LOG_W(kTag, "submit stopped: current session has no check-in operation ticket");
+    return Result::NotReady;
+  }
 
   HttpRequest request;
   request.method = "POST";
@@ -340,6 +385,101 @@ Result CheckinApi::submitCheckin(double latitude, double longitude, const String
   const Result result = m_http->request(request, rawResponse);
   if (result != Result::Ok) return result;
   if (rawResponse.status == 301 || rawResponse.status == 302) return Result::SessionInvalid;
-  if (rawResponse.status != 200) return Result::HttpError;
+  if (rawResponse.status != 200) {
+    // 服务器可能用 403 承载票据错误：识别到 4600x 就清票，让重试现场重取
+    if (rawResponse.body.indexOf("46001") >= 0 || rawResponse.body.indexOf("46002") >= 0 ||
+        rawResponse.body.indexOf("46003") >= 0) {
+      LOG_W(kTag, "ticket rejected at http %d, clearing for refetch", rawResponse.status);
+      clearOperationTicket();
+    }
+    return Result::HttpError;
+  }
+  return Result::Ok;
+}
+
+// ---- 微信小程序授权链（platform-app，platform: mp-weixin）----
+
+Result CheckinApi::checkWechatBind(const String& code, bool& outBind,
+                                   String& outSessionId) {
+  outBind = false;
+  outSessionId = "";
+  if (m_http == nullptr || code.length() == 0) return Result::InvalidParam;
+  HttpRequest request;
+  request.method = "POST";
+  request.url = String(AppConst::kJzszBaseUrl) + "/platform-app/api/auth/check-bind";
+  JsonDocument body;
+  body["code"] = code;
+  body["sn"] = "";
+  serializeJson(body, request.body);
+  request.addHeader("Content-Type", "application/json");
+  request.addHeader("platform", "mp-weixin");
+  HttpResponse response;
+  if (m_http->request(request, response) != Result::Ok) return Result::NetworkError;
+  if (!response.ok()) {
+    LOG_W(kTag, "check-bind http %d", response.status);
+    return Result::NetworkError;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, response.body) != DeserializationError::Ok)
+    return Result::ApiChanged;
+  // 小程序端信封：ok 字段独立于 code/status
+  if (!doc["ok"].as<bool>()) {
+    LOG_W(kTag, "check-bind ok=false");
+    return Result::SessionInvalid;
+  }
+  JsonObject data = doc["data"];
+  if (data.isNull()) return Result::ApiChanged;
+  outBind = data["bind"].as<bool>();
+  JsonVariant sessionV = data["sessionId"];
+  if (outBind && (sessionV.isNull() || sessionV.as<String>().length() == 0))
+    return Result::ApiChanged;
+  if (!sessionV.isNull()) outSessionId = sessionV.as<String>();
+  return Result::Ok;
+}
+
+Result CheckinApi::requestCheckinTicket(const String& code, const String& mpSessionId,
+                                        String& outTicket) {
+  outTicket = "";
+  if (m_http == nullptr || code.length() == 0 || mpSessionId.length() == 0)
+    return Result::InvalidParam;
+  HttpRequest request;
+  request.method = "POST";
+  request.url = String(AppConst::kJzszBaseUrl) + "/platform-app/api/auth/checkin-ticket";
+  JsonDocument body;
+  body["code"] = code;
+  serializeJson(body, request.body);
+  request.addHeader("Content-Type", "application/json");
+  request.addHeader("platform", "mp-weixin");
+  request.addHeader("Cookie", "SESSION=" + mpSessionId);
+  HttpResponse response;
+  if (m_http->request(request, response) != Result::Ok) return Result::NetworkError;
+  if (!response.ok()) {
+    LOG_W(kTag, "ticket http %d", response.status);
+    return Result::NetworkError;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, response.body) != DeserializationError::Ok)
+    return Result::ApiChanged;
+  if (!doc["ok"].as<bool>()) {
+    LOG_W(kTag, "ticket ok=false");
+    return Result::SessionInvalid;
+  }
+  JsonVariant ticketV = doc["data"]["ticket"];
+  if (ticketV.isNull()) return Result::ApiChanged;
+  outTicket = ticketV.as<String>();
+  // 契约：43 字符 [A-Za-z0-9_-]
+  if (outTicket.length() != 43) {
+    LOG_W(kTag, "ticket length %u != 43", outTicket.length());
+    outTicket = "";
+    return Result::ApiChanged;
+  }
+  for (size_t i = 0; i < outTicket.length(); ++i) {
+    char c = outTicket[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+          c == '_' || c == '-')) {
+      outTicket = "";
+      return Result::ApiChanged;
+    }
+  }
   return Result::Ok;
 }

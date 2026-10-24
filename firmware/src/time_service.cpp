@@ -17,8 +17,16 @@ constexpr time_t kSaneTimestamp = 1600000000;
 
 Result TimeService::begin(const char* ntpPrimary, const char* ntpSecondary,
                           int32_t timezoneOffsetSeconds) {
-  configTime(timezoneOffsetSeconds, 0, ntpPrimary, ntpSecondary);
-  LOG_I(kTag, "sntp configured: %s / %s (tz offset %d s)", ntpPrimary, ntpSecondary,
+  // 用 configTzTime 显式给定 POSIX 时区串。
+  // 原实现 configTime(offset, 0, ...) 在 core 4.x 里会拼出 "UTC-8DST-8" 这类
+  // 带 DST 的字符串，部分 newlib 版本解析失败后回落成 UTC0（实测设备时间比北京时间慢 8 小时，
+  // 会导致 22:00 的定时任务在真实时间 06:00 才触发）。
+  // POSIX 约定 "UTC-8" = UTC+8，因此这里对偏移取反。
+  const int32_t hours = timezoneOffsetSeconds / 3600;
+  char tz[16];
+  snprintf(tz, sizeof(tz), "UTC%+ld", static_cast<long>(-hours));
+  configTzTime(tz, ntpPrimary, ntpSecondary);
+  LOG_I(kTag, "sntp configured: %s / %s (tz=%s, offset=%d s)", ntpPrimary, ntpSecondary, tz,
         static_cast<int>(timezoneOffsetSeconds));
   return Result::Ok;
 }

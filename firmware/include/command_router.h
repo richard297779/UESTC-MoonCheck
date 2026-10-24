@@ -26,6 +26,7 @@
 #include "task_scheduler.h"
 #include "time_service.h"
 #include "wifi_manager.h"
+#include "wx_credential_store.h"
 
 class CommandRouter {
  public:
@@ -45,6 +46,8 @@ class CommandRouter {
     MultiCheckin,     ///< 多人顺序打卡（一次跑完所有账号）
     NotifyTest,       ///< 立即发一条测试通知（走真实链路，不占队列去重）
     DeadlineMissed,   ///< 定时：窗口关闭仍未成功 -> 告警 + 手机通知
+    WxTest,           ///< 微信授权链自测（刷新→login_buffer→取码→check-bind→取票，不提交）
+    WxPrefetch,       ///< 窗口起点取号：为默认账号预取票据并安装
   };
 
   /// @brief 任务项（定长，可安全放入 FreeRTOS 队列）。
@@ -54,6 +57,9 @@ class CommandRouter {
     int32_t requestId = 0;   ///< BLE 请求 id（0 表示定时触发，无回执）
     char payload[512] = {0}; ///< 附加参数（如 test.http 的 URL、test.chain 的等待秒数）
   };
+
+  /// @brief 注入微信凭据仓（可选；不注入则 wx.* 命令返回未就绪）。
+  void attachWxCredentialStore(wx::CredentialStore* store) { m_wxCred = store; }
 
   /// @brief 注入全部依赖。
   Result begin(AppConfig& config, CookieJar& cookies, WifiManager& wifi, TimeService& time,
@@ -74,7 +80,15 @@ class CommandRouter {
   /// @brief 统一事件出口。
   void emitEvent(const String& type, const String& payloadJson = "");
 
+  /// @brief 为指定凭据槽位跑完整微信链，产出操作票据（供打卡服务回调）。
+  Result ensureWxTicket(int slot, String& outTicket, String& outError);
+
  private:
+  // ---- 微信授权链自测（net_task）----
+  void workWxTest(const WorkItem& item);
+  void workWxPrefetch(const WorkItem& item);
+  wx::CredentialStore* m_wxCred = nullptr;
+
   // ---- 指令解析（在 net_task 中执行，栈充裕）----
   void dispatchCommand(const String& line);
 

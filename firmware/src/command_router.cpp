@@ -4,6 +4,14 @@
 
 #include "command_router.h"
 
+#include "wx_mmtls.h"
+#include "wx_oauth.h"
+
+namespace {
+/// 学校小程序 appid（成电智慧学工）
+constexpr const char* kWxCheckinAppId = "wxaa78bf2905f01cee";
+}  // namespace
+
 #include <esp_mac.h>
 #include <esp_system.h>
 
@@ -254,7 +262,11 @@ void CommandRouter::dispatchCommand(const String& line) {
       replyError(id, Result::InvalidParam, "ssid required");
       return;
     }
-    const Result result = m_config->setWifi(ssid, password);
+    // 可选：bssid + channel（隐藏 SSID 直连用；不填则走普通扫描连接）
+    const String bssid = doc["bssid"] | "";
+    const int channel = doc["channel"] | 0;
+    const Result result = m_config->setWifi(ssid, password, bssid,
+                                            static_cast<uint8_t>(channel < 0 ? 0 : channel));
     if (result != Result::Ok) {
       replyError(id, result, "save wifi failed");
       return;
@@ -262,6 +274,31 @@ void CommandRouter::dispatchCommand(const String& line) {
     if (!enqueue(WorkKind::WifiConnect, "", false, id)) {
       replyError(id, Result::InternalError, "device busy");
     }
+  } else if (op == "wx.import") {
+    // 凭据导入：{"op":"wx.import","slot":0,"openid":"...","access":"...","refresh":"...","expiresAt":...}
+    if (m_wxCred == nullptr) { replyError(id, Result::NotReady, "wx store not ready"); return; }
+    const int slot = doc["slot"] | 0;
+    wx::OauthCredentials cred;
+    cred.openid = doc["openid"] | "";
+    cred.accessToken = doc["access"] | "";
+    cred.refreshToken = doc["refresh"] | "";
+    cred.expiresAt = doc["expiresAt"] | static_cast<int64_t>(0);
+    if (slot < 0 || slot >= static_cast<int>(wx::CredentialStore::kMaxSlots) ||
+        !cred.valid()) { replyError(id, Result::InvalidParam, "bad credential fields"); return; }
+    const Result result = m_wxCred->save(static_cast<size_t>(slot), cred);
+    if (result != Result::Ok) { replyError(id, result, "save credential failed"); return; }
+    replyOk(id, "wx credential imported", "{\"slot\":" + String(slot) + "}");
+  } else if (op == "wx.status") {
+    if (m_wxCred == nullptr) { replyError(id, Result::NotReady, "wx store not ready"); return; }
+    replyOk(id, "wx credentials", "{\"slots\":" + m_wxCred->summary() + "}");
+  } else if (op == "wx.test") {
+    // 设备端全链路：刷新(可选)→login_buffer→MMTLS取码→check-bind→取票（不提交）
+    if (m_wxCred == nullptr) { replyError(id, Result::NotReady, "wx store not ready"); return; }
+    const int slot = doc["slot"] | 0;
+    char payload[16];
+    snprintf(payload, sizeof(payload), "slot=%d", slot);
+    if (!enqueue(WorkKind::WxTest, payload, false, id))
+      replyError(id, Result::InternalError, "device busy");
   } else if (op == "wifi.scan") {
     if (!enqueue(WorkKind::WifiScan, "", false, id)) {
       replyError(id, Result::InternalError, "device busy");
@@ -685,6 +722,8 @@ void CommandRouter::execute(const WorkItem& item) {
     case WorkKind::MultiCheckin: workMultiCheckin(item); break;
     case WorkKind::NotifyTest: workNotifyTest(item); break;
     case WorkKind::DeadlineMissed: workDeadlineMissed(item); break;
+    case WorkKind::WxTest: workWxTest(item); break;
+    case WorkKind::WxPrefetch: workWxPrefetch(item); break;
   }
 }
 
@@ -713,7 +752,14 @@ void CommandRouter::workWifiConnect(const WorkItem& item) {
   emitEvent("wifi", eventJson);
 
   m_time->begin();
-  const Result timeResult = m_time->waitSynced(20000);
+  Result timeResult = m_time->waitSynced(20000);
+  // SNTP 的首次轮询可能早于 DNS 就绪而失败（失败后默认间隔很长），这里主动重启 SNTP 再试两次。
+  for (int attempt = 0; timeResult != Result::Ok && attempt < 2; attempt++) {
+    LOG_W(kTag, "time sync retry %d/2", attempt + 1);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    m_time->begin();
+    timeResult = m_time->waitSynced(15000);
+  }
   setBusy(false);
   flashResult(timeResult == Result::Ok);
 
@@ -1450,5 +1496,115 @@ void CommandRouter::workDeadlineMissed(const WorkItem& item) {
       m_notify->post(NotifyKind::DeadlineMissed, oneBody, today + "/" + profile.label + "/deadline",
                      profile.label, NotifyTarget::AccountOnly);
     }
+  }
+}
+
+// ---------------------------------------------------------------- 微信授权链自测
+
+
+Result CommandRouter::ensureWxTicket(int slot, String& outTicket, String& outError) {
+  const char* const tag = "wx_ticket";
+  outTicket = "";
+  if (m_wxCred == nullptr || m_api == nullptr) {
+    outError = "wx store/api not ready";
+    return Result::NotReady;
+  }
+  if (slot < 0 || slot >= static_cast<int>(wx::CredentialStore::kMaxSlots)) {
+    outError = "bad wx slot";
+    return Result::InvalidParam;
+  }
+  wx::OauthCredentials cred;
+  if (m_wxCred->load(static_cast<size_t>(slot), cred) != Result::Ok) {
+    outError = "no wx credential in slot " + String(slot) + " (wx.import needed)";
+    return Result::NotFound;
+  }
+  const int64_t now = static_cast<int64_t>(time(nullptr));
+  if (cred.needsRefresh(now)) {
+    LOG_I(tag, "refreshing wx credentials (slot %d)", slot);
+    HttpResponse raw;
+    wx::OauthCredentials rotated;
+    if (wx::refreshCredentials(cred, rotated, raw) != wx::OauthResult::Ok) {
+      outError = "wx credential refresh rejected (re-scan needed)";
+      return Result::AuthFailed;
+    }
+    m_wxCred->save(static_cast<size_t>(slot), rotated);
+    cred = rotated;
+  }
+  String loginBuffer;
+  HttpResponse raw;
+  if (wx::fetchLoginBuffer(cred, loginBuffer, raw) != wx::OauthResult::Ok) {
+    outError = "login_buffer fetch failed";
+    return Result::AuthFailed;
+  }
+  wx::WxCodeResult code1 = wx::wxGetCode(loginBuffer, kWxCheckinAppId);
+  if (code1.result != wx::WxResult::Ok) {
+    outError = String("wx get_code#1 failed: ") + code1.errorDetail;
+    return Result::AuthFailed;
+  }
+  LOG_I(tag, "code#1 ok (%u chars)", code1.code.length());
+  bool bind = false;
+  String mpSession;
+  if (m_api->checkWechatBind(code1.code, bind, mpSession) != Result::Ok || !bind ||
+      mpSession.length() == 0) {
+    outError = "check-bind failed or wechat not bound to this account";
+    return Result::AuthFailed;
+  }
+  HttpResponse raw2;
+  if (wx::fetchLoginBuffer(cred, loginBuffer, raw2) != wx::OauthResult::Ok) {
+    outError = "login_buffer#2 fetch failed";
+    return Result::AuthFailed;
+  }
+  wx::WxCodeResult code2 = wx::wxGetCode(loginBuffer, kWxCheckinAppId);
+  if (code2.result != wx::WxResult::Ok) {
+    outError = String("wx get_code#2 failed: ") + code2.errorDetail;
+    return Result::AuthFailed;
+  }
+  if (m_api->requestCheckinTicket(code2.code, mpSession, outTicket) != Result::Ok ||
+      outTicket.length() != 43) {
+    outError = "checkin-ticket request failed";
+    return Result::AuthFailed;
+  }
+  LOG_I(tag, "ticket issued for slot %d (43 chars)", slot);
+  return Result::Ok;
+}
+
+void CommandRouter::workWxTest(const WorkItem& item) {
+  if (m_wxCred == nullptr) {
+    replyError(item.requestId, Result::NotReady, "wx store not ready");
+    return;
+  }
+  int slot = 0;
+  if (strncmp(item.payload, "slot=", 5) == 0) slot = atoi(item.payload + 5);
+  emitEvent("progress", "\"stage\":\"wx\"");
+  String ticket;
+  String error;
+  const Result result = ensureWxTicket(slot, ticket, error);
+  if (result != Result::Ok) {
+    replyError(item.requestId, result, error);
+    return;
+  }
+  // 不安装、不提交：仅验证链路。正式打卡由 CheckinService 走 ensureWxTicket 重新取票。
+  replyOk(item.requestId, "wx chain ok (device-side ticket issued)",
+          "{\"slot\":" + String(slot) + ",\"ticket\":43}");
+}
+
+// ---------------------------------------------------------------- 窗口起点取号
+
+void CommandRouter::workWxPrefetch(const WorkItem& item) {
+  // 默认账号（self）= 槽位 0；多账号时各自 perform 前仍会按属主现场取票。
+  if (m_wxCred == nullptr || m_api == nullptr || m_config == nullptr) return;
+  const String owner = m_config->auth().studentId;
+  if (m_api->hasFreshTicketFor(owner)) {
+    LOG_I("wx_prefetch", "fresh ticket already installed, skip");
+    return;
+  }
+  String ticket;
+  String error;
+  LOG_I("wx_prefetch", "prefetching wx ticket for slot 0");
+  if (ensureWxTicket(0, ticket, error) == Result::Ok && ticket.length() == 43) {
+    m_api->setOperationTicket(ticket, owner);
+    LOG_I("wx_prefetch", "ticket installed (43 chars) for owner %.8s", owner.c_str());
+  } else {
+    LOG_W("wx_prefetch", "prefetch failed: %s", error.c_str());
   }
 }
