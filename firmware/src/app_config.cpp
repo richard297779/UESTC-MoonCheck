@@ -19,6 +19,8 @@ const char* const kTag = "app_config";
 /// @brief NVS 键名（与 docs/firmware-design.md §8 一致）。
 constexpr const char* kNvsWifiSsid = "wifi_ssid";
 constexpr const char* kNvsWifiPass = "wifi_pass";
+constexpr const char* kNvsWifiBssid = "wifi_bssid";  // 隐藏 SSID 直连用（可选）
+constexpr const char* kNvsWifiCh = "wifi_ch";        // 信道（可选）
 constexpr const char* kNvsAuthUser = "auth_user";
 constexpr const char* kNvsAuthPass = "auth_pass";
 constexpr const char* kNvsAuthBfp = "auth_bfp";
@@ -130,6 +132,8 @@ Result AppConfig::loadAll() {
   // ---- WiFi ----
   m_wifi.ssid = getStringSafe(m_prefs, kNvsWifiSsid, "");
   m_wifi.password = getStringSafe(m_prefs, kNvsWifiPass, "");
+  m_wifi.bssid = getStringSafe(m_prefs, kNvsWifiBssid, "");
+  m_wifi.channel = static_cast<uint8_t>(m_prefs.getUChar(kNvsWifiCh, 0));
 
   // ---- 设备标签（BLE 名）----
   m_deviceLabel = getStringSafe(m_prefs, kNvsDevLabel, "");
@@ -216,15 +220,32 @@ Result AppConfig::persistString(const char* key, const String& value) {
   return m_prefs.putString(key, value) > 0 ? Result::Ok : Result::StorageError;
 }
 
-Result AppConfig::setWifi(const String& ssid, const String& password) {
+Result AppConfig::setWifi(const String& ssid, const String& password, const String& bssid,
+                          uint8_t channel) {
   if (ssid.length() == 0) return Result::InvalidParam;
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   m_wifi.ssid = ssid;
   m_wifi.password = password;
+  m_wifi.bssid = bssid;
+  m_wifi.channel = channel;
   Result result = persistString(kNvsWifiSsid, m_wifi.ssid);
   if (result == Result::Ok) result = persistString(kNvsWifiPass, m_wifi.password);
+  if (result == Result::Ok) {
+    // 注意：Preferences::putString("") 返回 0，会被 persistString 误判为失败（STORAGE_ERROR）。
+    // 空值必须走 remove，否则「清空 BSSID」永远失败、NVS 里残留旧值导致重启后连错 AP。
+    if (m_wifi.bssid.length() > 0) {
+      result = persistString(kNvsWifiBssid, m_wifi.bssid);
+    } else {
+      m_prefs.remove(kNvsWifiBssid);
+    }
+  }
+  if (result == Result::Ok) {
+    m_prefs.putUChar(kNvsWifiCh, m_wifi.channel);
+  }
   if (m_mutex) xSemaphoreGive(m_mutex);
-  LOG_I(kTag, "wifi saved: ssid=%s", ssid.c_str());
+  LOG_I(kTag, "wifi saved: ssid=%s bssid=%s ch=%u", ssid.c_str(),
+        m_wifi.bssid.length() ? m_wifi.bssid.c_str() : "-",
+        static_cast<unsigned>(m_wifi.channel));
   return result;
 }
 

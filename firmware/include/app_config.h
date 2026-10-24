@@ -49,7 +49,8 @@ class AppConfig {
 
   // ---- 写入（成功即落盘）----
   /// @brief 写入宿舍 WiFi。
-  Result setWifi(const String& ssid, const String& password);
+  Result setWifi(const String& ssid, const String& password, const String& bssid = "",
+                 uint8_t channel = 0);
   /// @brief 写入学号 / 密码 / 指纹（指纹可为空）。
   Result setAuth(const String& studentId, const String& password, const String& fingerprint);
   /// @brief 写入打卡坐标与地址。

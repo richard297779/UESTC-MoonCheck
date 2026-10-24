@@ -7,7 +7,8 @@
 // ============================================================================
 
 #include <Arduino.h>
-#include <esp_mac.h>  // esp_read_mac(ESP_MAC_BT)：广播名要用蓝牙 MAC，才与扫描到的地址一致
+#include <esp_mac.h>   // esp_read_mac(ESP_MAC_BT)：广播名要用蓝牙 MAC，才与扫描到的地址一致
+#include <esp_system.h>  // esp_reset_reason()：区分上电/软复位/看门狗/掉电
 
 #include "app_config.h"
 #include "app_types.h"
@@ -26,6 +27,8 @@
 #include "task_scheduler.h"
 #include "time_service.h"
 #include "wifi_manager.h"
+#include "wx_credential_store.h"
+#include "wx_selftest.h"
 
 namespace {
 
@@ -47,6 +50,7 @@ NotifyService g_notify;
 TaskScheduler g_scheduler;
 BleService g_ble;
 CommandRouter g_router;
+wx::CredentialStore g_wxCred;
 
 /// @brief 生成广播名：优先用自定义标签（`name.set`），否则用蓝牙 MAC 末两字节。
 /// @note 早期实现用 `ESP.getEfuseMac() & 0xFFFF`，但那个值的低 16 位其实是 MAC 的
@@ -72,6 +76,9 @@ void onWifiStateChanged(WifiState state, const String& info) {
 /// @brief 定时任务触发 -> 投递到 net_task。
 void onScheduledTrigger(TaskScheduler::Trigger trigger) {
   switch (trigger) {
+    case TaskScheduler::Trigger::WxPrefetch:
+      g_router.enqueue(CommandRouter::WorkKind::WxPrefetch);
+      break;
     case TaskScheduler::Trigger::Probe:
       g_router.enqueue(CommandRouter::WorkKind::Probe);
       break;
@@ -101,6 +108,28 @@ void setup() {
   Logger::instance().begin(LogLevel::Info, 115200);
   LOG_I(kTag, "=== WANAN checkin device booting ===");
   LOG_I(kTag, "firmware %s, built %s", FW_VERSION, FW_BUILD_TIME);
+  LOG_I(kTag, "reset reason: %d (1=power-on 3=sw 4=panic 5=wdt 12=brownout 15=deep-sleep)",
+        static_cast<int>(esp_reset_reason()));
+
+  // 0) 微信协议黄金向量自检（纯计算，无网络；失败不影响启动，仅记日志）
+  {
+    int total = 0;
+    String report;
+    const int passed = wx::runSelftest(total, report);
+    if (passed == total) {
+      LOG_I(kTag, "wx golden selftest: %d/%d PASS", passed, total);
+    } else {
+      LOG_E(kTag, "wx golden selftest: %d/%d FAIL", passed, total);
+      int start = 0;
+      while (start < static_cast<int>(report.length())) {
+        int end = report.indexOf('\n', start);
+        if (end < 0) end = report.length();
+        if (end > start) LOG_E(kTag, "%s", report.substring(start, end).c_str());
+        start = end + 1;
+      }
+    }
+  }
+
 
   // 1) 配置
   g_config.begin();
@@ -149,6 +178,24 @@ void setup() {
   g_scheduler.setTriggerSink(onScheduledTrigger);
 
   // 7) 指令路由
+  g_wxCred.begin();
+  g_router.attachWxCredentialStore(&g_wxCred);
+  // 打卡服务取票回调：当前账号（applyProfile 后 auth.user）→ 凭据槽位
+  g_checkin.setWxTicketProvider([](String& outTicket, String& outError) -> Result {
+    const String user = g_config.auth().studentId;
+    const size_t count = g_accounts.count();
+    int slot = 0;
+    for (size_t index = 0; index < count; index++) {
+      CheckinProfile profile;
+      if (!g_accounts.get(index, profile)) continue;
+      if (profile.studentId == user) {
+        slot = static_cast<int>(index);
+        break;
+      }
+    }  // 表为空或未命中时用设备自身配置 = 槽位 0
+    LOG_I("wx_ticket", "provider: user=%.8s -> slot %d", user.c_str(), slot);
+    return g_router.ensureWxTicket(slot, outTicket, outError);
+  });
   g_router.begin(g_config, g_cookies, g_wifi, g_time, g_auth, g_api, g_http, g_checkin, g_ble,
                  g_scheduler, g_led, g_accounts, g_multi, g_notify);
   g_ble.setLineCallback([](const String& line) { g_router.onBleLine(line); });

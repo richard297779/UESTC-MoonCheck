@@ -86,17 +86,20 @@ void TaskScheduler::poll() {
   const int windowEndSeconds = schedule.windowEndMinutes * 60;
   const int windowStartSeconds = schedule.windowStartMinutes * 60;
 
-  // ---- 预登录体检：**窗口一开始就做**（每天一次）----
-  // 为什么限定在窗口内：① SESSION TTL 实测约 1 小时，太早登录到 22:00 已经过期；
-  //                   ② 打卡提交本身只接受窗口内。
-  // （此处历史上写过"平台只给窗口内建立的会话授权"与"登录后需约 10 分钟才放行"，
-  //   两条均已被 docs/api-contract.md §8.7 推翻：真正的开关是门户预热
-  //   GET /api/isLoginFailure，与时段无关。）
-  // 21:00 体检 → 会话无效就地补登录并预热 → 22:00 直接提交。
+  // ---- 集中流程（2026-10-24 用户设定）----
+  // 窗口起点（21:00）：预取微信操作票据（取号，约 10 s，票据 ~30 min 有效）
   if (windowStartSeconds > 0 && secondsOfDay >= windowStartSeconds &&
+      secondsOfDay < checkinSeconds && m_lastPrefetchDate != today) {
+    m_lastPrefetchDate = today;
+    LOG_I(kTag, "trigger wx ticket prefetch (window start)");
+    m_sink(Trigger::WxPrefetch);
+    return;
+  }
+  // 窗口起点 +5 min（21:05）：预登录体检（CAS 登录 + 门户预热）
+  if (windowStartSeconds > 0 && secondsOfDay >= windowStartSeconds + 300 &&
       secondsOfDay < checkinSeconds && m_lastProbeDate != today) {
     m_lastProbeDate = today;
-    LOG_I(kTag, "trigger pre-login probe (window start)");
+    LOG_I(kTag, "trigger pre-login probe (window start +5 min)");
     m_sink(Trigger::Probe);
     return;
   }
