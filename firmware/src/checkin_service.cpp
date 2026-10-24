@@ -280,6 +280,24 @@ CheckinOutcome CheckinService::perform(bool force, String& outMessage) {
     return CheckinOutcome::OutOfWindow;
   }
 
+  // ---- 微信操作票据（平台 2026-10-23 起强制）----
+  // enterApp 会清空旧票据，故在提交前安装：无票据且配置了供给回调时现场取票
+  // （凭据刷新 → login_buffer → MMTLS 取码 → check-bind → 换票，约 10 s）。
+  const String currentUser = m_config->auth().studentId;
+  if (!m_api->hasFreshTicketFor(currentUser) && m_wxTicket) {
+    String ticket;
+    String wxError;
+    const Result wxResult = m_wxTicket(ticket, wxError);
+    if (wxResult == Result::Ok && ticket.length() == 43) {
+      m_api->setOperationTicket(ticket, currentUser);
+      LOG_I(kTag, "wx operation ticket installed (43 chars)");
+    } else {
+      outMessage = String("wx ticket failed: ") + wxError;
+      LOG_W(kTag, "%s", outMessage.c_str());
+      return CheckinOutcome::Failed;
+    }
+  }
+
   // ---- EP10 提交 ----
   const LocationConfig& location = m_config->location();
   String address = location.address;
@@ -304,6 +322,13 @@ CheckinOutcome CheckinService::perform(bool force, String& outMessage) {
   }
   const int code = doc["code"] | -1;
   const String message = doc["msg"] | "";
+  if (code == 46001 || code == 46002 || code == 46003) {
+    // 票据缺失/失效：清票让下次重试现场重取
+    m_api->clearOperationTicket();
+    outMessage = "ticket rejected (" + String(code) + "): " + message;
+    LOG_W(kTag, "%s", outMessage.c_str());
+    return CheckinOutcome::Failed;
+  }
   if (code != 0) {
     outMessage = "business code " + String(code) + ": " + message;
     LOG_W(kTag, "checkin rejected: %s", outMessage.c_str());

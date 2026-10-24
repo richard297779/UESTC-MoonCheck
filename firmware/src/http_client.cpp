@@ -109,6 +109,13 @@ String HttpClient::hostOf(const String& url) {
   return host;
 }
 
+String HttpClient::logUrl(const String& url) {
+  int end = url.indexOf('?');
+  const int hash = url.indexOf('#');
+  if (end < 0 || (hash >= 0 && hash < end)) end = hash;
+  return end < 0 ? url : url.substring(0, end) + "?[redacted]";
+}
+
 String HttpClient::pathOf(const String& url) {
   int start = url.indexOf("://");
   start = (start < 0) ? 0 : start + 3;
@@ -383,7 +390,9 @@ Result HttpClient::sendOnce(const HttpRequest& request, HttpResponse& response) 
     head += header.value;
     head += "\r\n";
   }
-  if (m_jar != nullptr) {
+  if (m_jar != nullptr && !hasHeader(request, "Cookie")) {
+    // 请求自带 Cookie（如小程序票据会话）时以自带为准：双 Cookie 头会让
+    // 服务端会话解析不确定（2026-10-24 上线前审查修复）
     const String cookie = m_jar->headerFor(request.url);
     if (cookie.length() > 0) {
       head += "Cookie: ";
@@ -418,7 +427,7 @@ Result HttpClient::sendOnce(const HttpRequest& request, HttpResponse& response) 
   client->stop();
 
   response.durationMs = millis() - startMs;
-  LOG_I(kTag, "%s %s -> %d (%u B, %u ms)", request.method.c_str(), request.url.c_str(),
+  LOG_I(kTag, "%s %s -> %d (%u B, %u ms)", request.method.c_str(), logUrl(request.url).c_str(),
         response.status, static_cast<unsigned>(response.bodyBytes),
         static_cast<unsigned>(response.durationMs));
   return response.result;
@@ -433,7 +442,7 @@ Result HttpClient::request(const HttpRequest& request, HttpResponse& response) {
   for (uint8_t hop = 0; hop < AppConst::kMaxRedirectHops; hop++) {
     if (!isRedirect(response.status) || response.location.length() == 0) break;
     const String target = urlJoin(request.url, response.location);
-    LOG_I(kTag, "redirect hop %u -> %s", hop + 1, target.c_str());
+    LOG_I(kTag, "redirect hop %u -> %s", hop + 1, logUrl(target).c_str());
     next.url = target;
     result = sendOnce(next, response);
     if (result != Result::Ok) return result;
@@ -449,7 +458,7 @@ Result HttpClient::requestFollow(const HttpRequest& request, HttpResponse& respo
     if (result != Result::Ok) return result;
     if (!isRedirect(response.status) || response.location.length() == 0) return Result::Ok;
     const String target = urlJoin(current.url, response.location);
-    LOG_I(kTag, "follow %u/%u -> %s", hop + 1, maxHops, target.c_str());
+    LOG_I(kTag, "follow %u/%u -> %s", hop + 1, maxHops, logUrl(target).c_str());
     current.url = target;
   }
   LOG_W(kTag, "too many redirects");
