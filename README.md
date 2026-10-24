@@ -1,3 +1,6 @@
+**喜报**
+由于muyuhuanghun大佬的技术实现，本项目又活过来了
+
 # 🌙 MoonCheck
 
 **ESP32 宿舍自动定位打卡终端** · 固件 v0.4.0（另有 [桌面版](desktop/README.md)，免硬件）

@@ -23,7 +23,8 @@ class TaskScheduler {
     Probe,           ///< 预登录体检（窗口起点触发，为平台的授权延迟留出时间）
     Checkin,         ///< 打卡（到点后触发；失败会按 kCheckinRetrySeconds 持续重试）
     DeadlineMissed,  ///< 窗口已结束但当天仍未确认成功（用于告警）
-  };
+    WxPrefetch,       ///< 窗口起点：设备自主预取微信操作票据
+};
 
   /// @brief 触发回调：由上层投递到网络任务执行。
   using TriggerSink = std::function<void(Trigger trigger)>;
@@ -46,6 +47,7 @@ class TaskScheduler {
   TimeService* m_time = nullptr;
   TriggerSink m_sink;
   String m_lastProbeDate;        ///< 窗口起点预登录的日期去重
+  String m_lastPrefetchDate;     ///< 当日已触发过取号
   String m_lastAttemptDate;      ///< 最近一次打卡尝试所属日期
   String m_failureReportedDate;  ///< 已上报"窗口结束仍失败"的日期
   String m_confirmedDate;        ///< 已确认打卡成功的日期（RAM 缓存：避免每秒读 NVS 与刷日志）

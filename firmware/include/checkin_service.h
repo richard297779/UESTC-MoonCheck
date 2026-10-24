@@ -10,6 +10,8 @@
 
 #include <Arduino.h>
 
+#include <functional>
+
 #include "app_config.h"
 #include "app_types.h"
 #include "cas_auth.h"
@@ -69,6 +71,11 @@ class CheckinService {
   /// @param force true=跳过"今日已打卡"检查（仍要求处于打卡时段内）。
   CheckinOutcome perform(bool force, String& outMessage);
 
+  /// @brief 微信操作票据供给回调：提交前没有票据时调用（每账号独立凭据）。
+  /// @return Result::Ok 且 outTicket 非空 = 成功；否则打卡失败并带 outError。
+  using WxTicketProvider = std::function<Result(String& outTicket, String& outError)>;
+  void setWxTicketProvider(WxTicketProvider provider) { m_wxTicket = std::move(provider); }
+
   /// @brief 重置"登录冷却"状态。
   /// @note 多人顺序打卡**必须**在切换账号时调用：冷却是按"上一次登录"计算的，
   ///       不清零会导致第 2 个账号之后 30 分钟内无法登录。
@@ -84,6 +91,7 @@ class CheckinService {
   static const char* outcomeName(CheckinOutcome outcome);
 
  private:
+  WxTicketProvider m_wxTicket;
   AppConfig* m_config = nullptr;
   CasAuth* m_auth = nullptr;
   CheckinApi* m_api = nullptr;

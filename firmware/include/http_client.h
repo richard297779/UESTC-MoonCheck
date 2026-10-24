@@ -83,6 +83,8 @@ class HttpClient {
   // ---- 工具函数 ----
   static String urlEncode(const String& value);
   static String urlDecode(const String& value);
+  /// 日志仅保留 URL 的主机和路径，防止泄露票据等查询参数。
+  static String logUrl(const String& url);
   static String hostOf(const String& url);
   static String pathOf(const String& url);
   static bool isHttps(const String& url);

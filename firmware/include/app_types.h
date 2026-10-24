@@ -92,8 +92,11 @@ inline const char* logLevelName(LogLevel level) {
 struct WifiConfig {
   String ssid;
   String password;
+  String bssid;          ///< 可选：AP 的 BSSID（"AA:BB:CC:DD:EE:FF"），隐藏 SSID 直连用
+  uint8_t channel = 0;   ///< 可选：AP 所在信道（配合 bssid 跳过扫描）
 
   bool isConfigured() const { return ssid.length() > 0; }
+  bool hasBssid() const { return bssid.length() >= 11 && channel > 0; }
 };
 
 /// @brief 统一身份认证配置。
@@ -197,7 +200,7 @@ inline constexpr uint32_t kLoginCooldownMs = 30UL * 60UL * 1000UL;
 inline constexpr uint32_t kCheckinRetrySeconds = 180;
 
 /// @brief net_task 参数。
-inline constexpr uint32_t kNetTaskStackBytes = 10240;
+inline constexpr uint32_t kNetTaskStackBytes = 20480;  // 2026-10-24: MMTLS/ECDH/ArduinoJson 需要（10K 时 wx.test 崩溃重启）
 inline constexpr UBaseType_t kNetTaskPriority = 2;
 inline constexpr BaseType_t kNetTaskCore = 1;
 
