@@ -3,9 +3,9 @@
 
 # 🌙 MoonCheck
 
-**ESP32 宿舍自动定位打卡终端** · 固件 v0.4.0（另有 [桌面版](desktop/README.md)，免硬件）
+**ESP32 宿舍自动定位打卡终端** · 固件版本 v0.5.0（另有 [桌面版](desktop/README.md)，免硬件）
 
-一块常驻宿舍的 ESP32，蓝牙配置一次，之后每晚自动完成「登录 → 门户预热 → 进入微应用 → 定位打卡 → 结果确认」。配置完成后不需要电脑，也不用每天操作。
+一块常驻宿舍的 ESP32，蓝牙配置一次，之后每晚自动完成「登录 → 门户预热 → 进入微应用 → 获取微信操作票据 → 定位打卡 → 结果确认」。配置完成后不需要电脑，也不用每天操作。
 
 > 本项目按**电子科技大学「晚安成电」**平台实现（打卡窗口 21:00–23:30）。其他学校的平台不同，需自行适配源码。
 
@@ -14,7 +14,8 @@
 ## 功能
 
 - **蓝牙配网**：手机 nRF Connect 或电脑 `ble_console.py` 即可完成全部配置。
-- **一次配置，长期有效**：固定浏览器指纹后，登录不再需要短信验证码。
+- **自动获取打卡操作票据**：当前固件源码内置微信小程序授权链，打卡前自动申请平台要求的 `X-Checkin-Ticket`。
+- **一次配置，长期有效**：CAS 登录使用浏览器指纹避免重复短信验证；微信授权凭据用于获取打卡操作票据。
 - **每晚自动打卡**：21:00 预登录，22:00 提交（±30 秒抖动），失败每 3 分钟重试到 23:30。
 - **结果可查**：打卡后自动复查，结果写入设备，掉电不丢；`status` / `probe` 随时查询。
 - **掉电自恢复**：重启后自动重连 WiFi、校时、继续调度。
@@ -22,7 +23,7 @@
 - **手机通知**（可选）：Bark / ntfy / Server酱 / 局域网中转，成功、失败、重试都有推送；支持**多通道**（每人一条通道，自己的结果只推给自己）。
 - **一台设备多人**：账号表最多 6 人，可单独开关（需每位账号持有者知情同意）。
 - **两种板型**：ESP32-S3（16 MB，推荐）与经典 ESP32-WROOM-32（4 MB）。
-- **桌面版**：同款核心打成单个 `MoonCheck.exe` / Linux 可执行文件，CLI + 图形界面双配置，也支持多账号与逐人推送。
+- **桌面版**：单个 `MoonCheck.exe` / Linux 可执行文件，CLI + 图形界面双配置，也支持多账号与逐人推送；但尚未实现新的微信操作票据流程，当前不能满足平台最新打卡要求，详见[桌面版说明](desktop/README.md)。
 
 ---
 
@@ -34,7 +35,7 @@
 | 供电 | USB 5 V 常供电（≥ 500 mA） |
 | 网络 | 2.4 GHz WiFi；校园网需能直接上网（`netcheck` 返回 204） |
 | 电脑 | Windows / macOS / Linux，Chrome 或 Edge，Python 3.10+ |
-| 信息 | 学号、统一身份认证密码、浏览器指纹、宿舍坐标、WiFi 名与密码 |
+| 信息 | 学号、统一身份认证密码、浏览器指纹、微信授权凭据、宿舍坐标、WiFi 名与密码 |
 
 > 坐标**必须在宿舍现场取**：打卡围栏只有 130 米。
 
@@ -44,20 +45,21 @@
 
 ### 1. 刷固件
 
-从 [Releases](https://github.com/richard297779/UESTC-MoonCheck/releases) 下载对应板型的
-`wanan-<版本>-<板型>-merged.bin`，用 Chrome / Edge 打开
-<https://espressif.github.io/esptool-js/>，地址填 `0x0` 刷入。
+GitHub Releases 中已发布的 v0.4.0 预编译固件不含新的微信票据流程。当前源码版本为 v0.5.0；在 v0.5.0 Release 发布前，请按[自行编译](firmware/README.md)构建并烧录。网页烧录工具的操作说明见[刷固件](docs/flashing.md)。
 
 > 详细步骤、升级（保留配置）和报错处理见 **[刷固件](docs/flashing.md)**。
 
-### 2. 取两个值
+> **固件版本注意：** 当前源码的 `FW_VERSION` 为 `0.5.0`。GitHub Releases 中已发布的 v0.4.0 固件早于微信票据改动；在 v0.5.0 Release 发布前，请从当前源码编译。
+
+### 2. 准备授权信息与宿舍坐标
 
 | 值 | 怎么取 |
 | --- | --- |
-| 浏览器指纹 | Chrome 登录 `jzsz.uestc.edu.cn` → F12 → Application → Cookies → `https://idas.uestc.edu.cn` → `MULTIFACTOR_BROWSER_FINGERPRINT`（32 位十六进制） |
+| 浏览器指纹 | 用于 CAS 登录免短信验证：Chrome 登录 `jzsz.uestc.edu.cn` → F12 → Application → Cookies → `https://idas.uestc.edu.cn` → `MULTIFACTOR_BROWSER_FINGERPRINT`（32 位十六进制） |
+| 微信授权凭据 | 每个打卡账号需要 `openid`、`access`、`refresh`、`expiresAt`；由本人授权获得。仓库目前不提供获取这些初始凭据的工具。 |
 | 宿舍坐标 | 人在宿舍打开晚安成电页面 → F12 → Network 过滤 `reverse` → 从 `map/reverse?lat=…&lng=…` 读取 |
 
-指纹是 HttpOnly，`document.cookie` 看不到；必须用你**平时打卡的那台浏览器**。
+浏览器指纹是 HttpOnly，`document.cookie` 看不到；必须用你**平时打卡的那台浏览器**。微信授权凭据与密码同等敏感，只能导入本人账号并妥善保管。
 
 ### 3. 蓝牙配置
 
@@ -72,10 +74,13 @@ python tools/ble_console.py --name WANAN-XXXX
 ```text
 wifi <WiFi名> <WiFi密码>
 auth <学号> <密码> <指纹>
+raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":<Unix秒>}
 loc <纬度> <经度> 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
 ```
+
+`expiresAt` 使用 Unix 时间戳（秒）。执行 `raw {"op":"wx.status"}` 确认槽位已保存，再用 `raw {"op":"wx.test","slot":0}` 测试微信授权链；`wx.test` 只取票、不提交打卡。多人账号按账号表顺序分别导入槽位 0–5，见[多人打卡](docs/multi-account.md)。
 
 ### 4. 验证
 
@@ -84,6 +89,7 @@ chain 0
 ```
 
 看到 `appEntry: true` 就说明平台已授权这台设备。白天 `inWindow: false` 是正常的。
+`chain` 不检查微信票据；新源码还应确认 `raw {"op":"wx.test","slot":0}` 成功。
 
 21:00–23:30 之间可以手动打一次：
 
@@ -182,6 +188,7 @@ notify add A01url url=… accounts=A01    # 结果单独推给他
 - 坐标固定为配置值，设备需常驻打卡范围内。
 - 二次验证码中继未实现：指纹失效时会报 `NEED_MFA`，需重新取指纹。
 - 固件升级需 USB 刷写（OTA 未实现）。
+- 微信授权凭据会在设备 NVS 中保存；若凭据过期且刷新失败，需要重新导入本人账号的授权凭据。
 - 通知队列在内存中，重启会丢失尚未发送的通知。
 
 ---

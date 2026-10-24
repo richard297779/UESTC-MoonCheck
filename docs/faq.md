@@ -86,8 +86,18 @@ Windows 设置 → 蓝牙 → 删除该设备后重连；或用 `tools/clear_ble
 同上的原因：会话未被微应用授权。先确认 `chain 0` 里 `warmup:true`。
 
 **`NEED_MFA`（需要短信验证码）**
-指纹没填、填错，或换了浏览器。用你**平时打卡的那台浏览器**重新取一次
-`MULTIFACTOR_BROWSER_FINGERPRINT`，再 `auth` 重新写入。
+这是 CAS 登录要求二次验证，通常与浏览器指纹未设置、错误或失效有关。用你**平时打卡的那台浏览器**重新取
+`MULTIFACTOR_BROWSER_FINGERPRINT`，再 `auth` 重新写入。它与下方微信操作票据是两项不同的授权。
+
+**打卡提示 `wx ticket failed`、`wx.import needed` 或微信换票失败**
+平台要求打卡请求携带微信小程序操作票据。先执行 `raw {"op":"wx.status"}` 检查当前账号对应槽位，再用
+`raw {"op":"wx.test","slot":0}` 测试（按实际槽位调整）。缺少凭据时，按[快速开始](quickstart.md)导入本人授权的 `openid`、`access`、
+`refresh`、`expiresAt`；若刷新被拒绝，需重新获取并导入凭据。`chain` 不检查微信票据。
+
+> GitHub Releases 中已发布的 v0.4.0 预编译固件不包含微信票据支持。当前源码版本为 v0.5.0；在 v0.5.0 Release 发布前，请从当前源码编译。不要仅凭旧设备报告的版本号判断是否包含此功能。
+
+**桌面版打卡不成功？**
+当前桌面版尚未实现微信票据流程；平台强制要求 `X-Checkin-Ticket` 后，桌面版不能完成新的打卡请求。该能力目前仅在更新后的固件源码中实现。
 
 **`OUT_OF_WINDOW`**
 不在 21:00–23:30 内。白天看到 `inWindow:false` 是正常的。

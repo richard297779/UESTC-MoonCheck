@@ -2,6 +2,8 @@
 
 > 对应 F1 / F2 / F6 与 D8（最小硬件）。目标：**手机不装任何自研 App 就能完成全部配置与运维**。
 > 实现：ESP-IDF NimBLE，GATT Server。
+>
+> 本文上半部含早期协议设计，当前设备指令以 §4.4 与固件源码为准。当前固件还需要导入微信授权凭据并获取平台打卡票据；该流程不属于 CAS 的浏览器指纹 / 短信验证。
 
 ---
 
@@ -115,6 +117,9 @@ code=123456                          // 纯文本形式（同样接受）
 | `wifi.set` | `ssid,pass` | 写 WiFi 并立即连接+校时 | 是 |
 | `wifi.scan` | — | 扫描周边 AP | 是 |
 | `auth.set` | `user,pass[,bfp]` | 写学号 / 密码 / 指纹（不回显） | 否 |
+| `wx.import` | `slot,openid,access,refresh,expiresAt` | 导入本人微信授权凭据；槽位与账号顺序对应，0–5 | 否 |
+| `wx.status` | — | 查看微信凭据槽位状态与过期时间，不回显令牌 | 否 |
+| `wx.test` | `slot?` | 设备端获取打卡票据链路测试；不提交打卡 | 是 |
 | `loc.set` | `lat,lng[,addr]` | 写打卡坐标 | 否 |
 | `sched.set` | `at,window_end[,jitter_s,window_start]` | 写打卡时间与窗口（默认 22:00 / 21:00–23:30） | 否 |
 | `auto.set` | `enabled` | 开关每日自动打卡 | 否 |

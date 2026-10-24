@@ -29,9 +29,9 @@ mooncheck/
 
 | 文档 | 内容 |
 | --- | --- |
-| [api-contract.md](docs/api-contract.md) | 平台 10 个接口（EP01–EP10）的请求/响应、错误码，以及「门户预热」这个关键根因 |
-| [ble-protocol.md](docs/ble-protocol.md) | BLE 帧格式、分片、全部 JSON 指令与事件、LED/按键、错误码 |
-| [firmware-design.md](docs/firmware-design.md) | 固件 17 个模块的分工、状态机、时间预算、关键取舍 |
+| [api-contract.md](docs/api-contract.md) | 历史平台接口抓包（EP01–EP10）及当前微信操作票据补充 |
+| [ble-protocol.md](docs/ble-protocol.md) | BLE 帧格式、历史设计、当前 JSON 指令与事件、LED/按键、错误码 |
+| [firmware-design.md](docs/firmware-design.md) | 固件早期设计及当前微信授权 / 票据实现说明 |
 | [python-test-design.md](docs/python-test-design.md) | PC 参考实现的设计（模块划分、CLI、错误码、测试） |
 | [python-verification-plan.md](docs/python-verification-plan.md) | V0–V5 验证方案与实测结论 |
 | [test-plan-checkin-path.md](docs/test-plan-checkin-path.md) | 「能登录却打不了卡」的完整排查记录与二分定位过程 |

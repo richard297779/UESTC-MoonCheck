@@ -29,6 +29,22 @@ account add A03 2023ZZZZZZZ pass3 - 30.753500 103.934200 四川省成都市郫�
 
 > 每个人的指纹都不同，必须各用各的（指纹 = 那台浏览器）。填错会报 `NEED_MFA`。
 
+## 微信授权凭据（当前固件源码）
+
+新版固件除了 CAS 登录所需的学号、密码和指纹，还需要每个账号本人授权的微信凭据，用来换取平台要求的打卡操作票据。凭据字段为 `openid`、`access`、`refresh` 和 `expiresAt`（Unix 秒）；仓库目前没有提供获取初始凭据的工具。
+
+微信凭据槽位按账号表顺序从 0 开始，与上面的账号排列对应。账号表为空、只使用设备主账号时用槽位 0。每个账号都应由账号持有人提供并授权：
+
+```text
+raw {"op":"wx.import","slot":0,"openid":"<A01本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+raw {"op":"wx.import","slot":1,"openid":"<A02本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+raw {"op":"wx.status"}
+raw {"op":"wx.test","slot":0}
+raw {"op":"wx.test","slot":1}
+```
+
+`raw {"op":"wx.status"}` 只显示槽位摘要，不回显令牌，也不会显示槽位对应的账号。新增账号会追加到表尾；删除账号会压缩账号表，之后账号的槽位可能改变。每次删除、清空后重建或调整账号顺序后，都要按新的顺序重新导入受影响账号的凭据，并逐个运行 `wx.test`。微信授权令牌等同敏感登录凭据，会保存在设备 NVS 中；不要共享或提交到 Git。
+
 ---
 
 ## 查看与管理
@@ -95,8 +111,9 @@ notify add A03url url=https://api.day.app/<小赵的BarkKey>/{title}/{body} styl
 
 | 现象 | 处理 |
 | --- | --- |
-| 某个人一直失败，其他人正常 | 单独 `account off` 停用他，再用 `account add` 重新添加，重点检查指纹 |
+| 某个人一直失败，其他人正常 | 单独 `account off` 停用他，再检查该账号的指纹和对应的微信凭据槽位 |
 | 报 `NEED_MFA` | 该账号的指纹不对或已失效，让他用自己浏览器重新取一次 |
+| 微信换票失败 / 找不到凭据 | 确认槽位索引与账号表顺序一致；凭据被拒绝时由该账号持有人重新获取并导入 |
 | `account list` 里没有 | 检查标签拼写；`account add` 参数是否齐全（至少 5 段） |
 | 想把主账号也加进表 | 可以。表非空后，`auth` 配的那个主账号**不再单独执行** |
 | 全部报错 | 先 `chain 0` 确认设备本身链路正常，再排查指纹 |

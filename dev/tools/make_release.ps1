@@ -14,8 +14,9 @@
     4. 用 gh 自动创建/更新 GitHub Release 并上传全部资产（没有 gh 时打印手动上传指引）
 
   可选参数（双击一般不需要）：
-    -Version 0.4.0      覆盖自动读到的版本号
+    -Version 0.5.0      覆盖自动读到的版本号
     -NoUpload           只打包，不上传
+    -SkipDesktop        不附带桌面版可执行文件
     -Prerelease         Release 标记为预发布
     -AllowStale         允许 build 产物比源码旧（默认拒绝，防止发出错版本的包）
     -Repo owner/name    指定 gh 目标仓库（默认用脚本所在 git 仓库）
@@ -88,7 +89,7 @@ foreach ($cand in @($ownBuild,
     if (Test-Path -LiteralPath $cand) { $BuildRoot = $cand; break }
 }
 if (-not $BuildRoot) {
-    Fail ("找不到 build 产物目录（期望 firmware\.pio\build）。`n      本脚本不编译，请先在 VSCode/PlatformIO 里 Build 两个环境：`n        pio run -d firmware -e esp32-s3-devkitc-1`n        pio run -d firmware -e esp32-wroom-32-COM6`n      检查过的位置：$ownBuild 与 " + (Join-Path $parentDir 'firmware\.pio\build'))
+    Fail ("找不到 build 产物目录（期望 firmware\.pio\build）。`n      本脚本不编译，请先在 VSCode/PlatformIO 里 Build 两个环境：`n        pio run -d firmware -e esp32-s3-devkitc-1`n        pio run -d firmware -e esp32-wroom-32`n      检查过的位置：$ownBuild 与 " + (Join-Path $parentDir 'firmware\.pio\build'))
 }
 Info ("build 产物目录：$BuildRoot")
 if ($BuildRoot -ne $ownBuild) {
@@ -114,7 +115,7 @@ if (-not $ver) {
 if (-not $ver) {
     $preview = ((Get-Content -LiteralPath $verFile | Select-Object -First 20) -join ' | ')
     if ($preview.Length -gt 200) { $preview = ($preview -replace '^(.{0,200}).*$', '$1') + '…' }
-    Fail ('app_version.h 里没找到 FW_VERSION 的定义（期望形如 #define FW_VERSION "0.3.1"）：' + $verFile + '；文件前 20 行：' + $preview)
+    Fail ('app_version.h 里没找到 FW_VERSION 的定义（期望形如 #define FW_VERSION "X.Y.Z"）：' + $verFile + '；文件前 20 行：' + $preview)
 }
 if ($ver -notmatch '^[0-9]+\.[0-9]+[0-9A-Za-z.\-]*$') {
     Fail "版本号格式不合理：'$ver'（应形如 0.3.1 或 1.0.0-rc1）"

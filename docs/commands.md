@@ -18,6 +18,7 @@ python tools/ble_console.py --name WANAN-XXXX
 | --- | --- |
 | `wifi <ssid> [密码]` | 连接 2.4 GHz WiFi；成功后自动校时 |
 | `auth <学号> <密码> [指纹]` | 配置主账号；指纹可选但强烈建议填 |
+| `raw {"op":"wx.import",...}` | 导入本人微信授权凭据；供新版固件获取打卡操作票据 |
 | `loc <纬度> <经度> [地址…]` | 配置打卡坐标，地址只用于显示 |
 | `sched <打卡时间> [窗口结束] [抖动秒]` | 例：`sched 22:00 23:30 30` |
 | `auto [on\|off]` | 开关每日自动打卡（不带参数等于 `on`） |
@@ -28,6 +29,7 @@ python tools/ble_console.py --name WANAN-XXXX
 ```text
 wifi Dorm-2.4G mywifi123
 auth 2023XXXXXXX mypassword 0123456789ABCDEF0123456789ABCDEF
+raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
 loc 30.753456 103.934123 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
@@ -35,6 +37,28 @@ auto on
 
 > WiFi 名或密码含空格时，短命令会被拆错，改用原始指令：
 > `raw {"op":"wifi.set","ssid":"我的 WiFi","pass":"a b#c"}`
+
+### 微信操作票据（当前固件源码）
+
+平台现要求打卡请求携带 `X-Checkin-Ticket`。当前 v0.5.0 源码会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。GitHub Releases 中已发布的 v0.4.0 预编译固件不含此更新；在 v0.5.0 Release 发布前，请使用当前源码编译。
+
+在 `ble_console.py` 中可直接使用以下快捷命令：
+
+```text
+wx import 0 <openid> <access> <refresh> <expiresAt>
+wx status
+wx test 0
+```
+
+`wx import` 的令牌会发送给设备，但不会显示在控制台回显中。使用 nRF Connect 等原始 BLE 客户端时，请改用下方 JSON 指令。
+
+| 操作 | 命令（`ble_console.py`）/ JSON 指令 | 说明 |
+| --- | --- | --- |
+| 导入 | `raw {"op":"wx.import","slot":0,"openid":"…","access":"…","refresh":"…","expiresAt":<Unix秒>}` | 保存本人授权的微信凭据到槽位 0–5；刷新后会自动更新凭据 |
+| 查看摘要 | `raw {"op":"wx.status"}` | 仅显示各槽位是否有效及过期时间，不返回凭据明文 |
+| 测试 | `raw {"op":"wx.test","slot":0}` | 执行换票链路但不提交打卡 |
+
+`expiresAt` 为 Unix 秒。账号表为空时主账号使用槽位 0；账号表非空时，账号按表内顺序对应槽位 0–5。删除账号会使后续账号位置前移，因此应重新导入受影响槽位的凭据。每个账号必须使用本人同意提供的凭据。仓库目前不提供获取初始凭据的工具；请将其视为密码保管。
 
 ---
 
@@ -60,6 +84,7 @@ auto on
 | `login [force]` | 登录。窗口外默认跳过（保护会话），`force` 强制 |
 | `probe` | 只读体检：不登录、不打卡，只看平台会话是否可用 |
 | `chain [秒] [force]` | 全链路自检：登录页 → 会话 → H5 → 门户预热 → 进入微应用 |
+| `raw {"op":"wx.test","slot":0}` | 测试指定账号槽位的微信授权换票链路，不提交打卡 |
 | `checkin [force]` | 提交打卡。只在 21:00–23:30 有效；成功后自动复查 |
 | `http <url>` | 用设备网络发一次 GET，排查 DNS / TLS / 代理 |
 | `raw <json>` | 直接发送 JSON |
@@ -92,6 +117,7 @@ auto on
 | `canCheckin` | 现在是否能直接打卡 |
 
 白天看到 `inWindow: false` 是完全正常的。
+`chain` 检查 CAS / 微应用链路，不检查微信票据；对当前源码还应单独运行 `raw {"op":"wx.test","slot":0}`。
 
 ---
 
@@ -148,6 +174,9 @@ auto on
 | --- | --- | --- |
 | `hello` | — | 版本与硬件信息 |
 | `status` | — | 全量状态 |
+| `wx.import` | `slot`, `openid`, `access`, `refresh`, `expiresAt` | 导入微信授权凭据（slot 0–5） |
+| `wx.status` | — | 查看微信凭据槽位摘要（不含令牌） |
+| `wx.test` | `slot?` | 测试设备端票据获取，不提交打卡 |
 | `wifi.set` | `ssid`, `pass` | 连接 WiFi |
 | `wifi.scan` | — | 扫描 2.4 GHz |
 | `auth.set` | `user`, `pass`, `bfp` | 主账号 |
@@ -205,12 +234,14 @@ auto on
 ```json
 {"id":1,"op":"wifi.set","ssid":"Dorm-2.4G","pass":"mywifi123"}
 {"id":2,"op":"auth.set","user":"2023XXXXXXX","pass":"mypassword","bfp":"0123456789ABCDEF0123456789ABCDEF"}
-{"id":3,"op":"loc.set","lat":30.753456,"lng":103.934123,"addr":"xx 宿舍"}
-{"id":4,"op":"sched.set","at":"22:00","window_end":"23:30","jitter_s":30}
-{"id":5,"op":"auto.set","enabled":true}
-{"id":6,"op":"test.chain","wait_s":90}
+{"id":3,"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+{"id":4,"op":"loc.set","lat":30.753456,"lng":103.934123,"addr":"xx 宿舍"}
+{"id":5,"op":"sched.set","at":"22:00","window_end":"23:30","jitter_s":30}
+{"id":6,"op":"auto.set","enabled":true}
+{"id":7,"op":"wx.test","slot":0}
+{"id":8,"op":"test.chain","wait_s":90}
 ```
 
-每发一条，TX 里会收到对应 `id` 的回执。`test.chain` 返回 `appEntry:true` 就算配置成功。
+每发一条，TX 里会收到对应 `id` 的回执。`wx.test` 和 `test.chain` 都通过后，才分别确认微信票据链路与 CAS / 微应用链路正常。
 
 > 手机 App 一次只能发一条，注意等上一条回执出来再发下一条。

@@ -12,8 +12,10 @@
 | --- | --- |
 | 硬件 | 已烧录固件的板子、USB 数据线、5 V 供电 |
 | 软件 | Python 3.10+（推荐 3.12）+ `bleak` |
-| 信息 | 学号、统一身份认证密码、宿舍 WiFi 名与密码 |
-| 现场 | **浏览器指纹**（在电脑上取）、**宿舍坐标**（必须在宿舍取） |
+| 信息 | 学号、统一身份认证密码、微信授权凭据、宿舍 WiFi 名与密码 |
+| 现场 | **浏览器指纹**（CAS 登录用）、**宿舍坐标**（必须在宿舍取） |
+
+> GitHub Releases 中已发布的 v0.4.0 预编译固件早于微信票据更新。当前源码版本为 `0.5.0`；在 v0.5.0 Release 发布前，请按[自行编译](../firmware/README.md)从当前源码构建。
 
 ---
 
@@ -36,7 +38,9 @@ python -m pip install bleak
 
 ---
 
-## 2. 取「浏览器指纹」
+## 2. 准备授权信息
+
+### 2.1 取「浏览器指纹」
 
 这个值决定设备登录时会不会被要求短信验证码。**必须用你平时打卡、且登录过的那个浏览器。**
 
@@ -57,6 +61,12 @@ python -m pip install bleak
 ![备用取法：bfp/info 请求](assets/quickstart/05-bfp-info-url.png)
 
 > 🔒 这个值等于「免验证码的钥匙」，不要发群、不要截图、不要上传网盘或 GitHub。
+
+### 2.2 准备微信授权凭据
+
+新版固件在提交打卡前，会使用微信小程序授权链向平台换取短效操作票据。每个账号需要本人授权得到的 `openid`、`access`、`refresh` 和 `expiresAt`（Unix 时间戳，秒）。
+
+> 当前仓库未包含获取初始微信授权凭据的工具或操作流程；请勿使用他人的凭据，也不要把凭据发到聊天、截图或提交到 Git。固件会在设备 NVS 中保存这些凭据。
 
 ---
 
@@ -99,11 +109,12 @@ python tools/ble_console.py --name WANAN-XXXX
 
 ## 5. 写入配置
 
-依次输入下面 5 条（每行一条）：
+依次输入下面 6 条（每行一条）：
 
 ```text
 wifi <宿舍WiFi名> <WiFi密码>
-auth <学号> <密码> <第 2 步取到的指纹>
+auth <学号> <密码> <第 2.1 步取到的指纹>
+raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":<Unix秒>}
 loc <纬度> <经度> 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
@@ -114,6 +125,7 @@ auto on
 ```text
 wifi Dorm-2.4G mywifi123
 auth 2023XXXXXXX ************ 0123456789ABCDEF0123456789ABCDEF
+raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
 loc 30.753456 103.934123 四川省成都市郫都区
 sched 22:00 23:30 30
 auto on
@@ -123,7 +135,8 @@ auto on
 | --- | --- |
 | WiFi | **必须 2.4 GHz**，板子不支持 5 GHz。不确定先输 `scan`，看你的 SSID 的 `channel` 是否在 1–13 |
 | WiFi 名或密码含空格 | 用原始指令：`raw {"op":"wifi.set","ssid":"我的 WiFi","pass":"a b#c"}` |
-| 指纹 | 一定要填，否则设备会被要求短信验证码（它收不到短信） |
+| 指纹 | 用于 CAS 登录；如未配置或失效，登录仍可能要求短信验证码 |
+| 微信凭据 | 每个账号单独导入；`expiresAt` 是 Unix 秒。用 `raw {"op":"wx.status"}` 查看槽位摘要，不会回显凭据明文 |
 | `loc` 第三个参数 | 地址文本，可随意填，只影响打卡记录里显示的地点 |
 | `sched` | 依次为：打卡时间、窗口结束、随机抖动秒数 |
 
@@ -165,11 +178,12 @@ chain 0
 | --- | --- | --- |
 | `appEntry:true` + `inWindow:false` | ✅ 一切正常，只是不在打卡时段 | 等 21:00–23:30 |
 | `canCheckin:true` | ✅ 现在就能打 | 直接 `checkin` |
-| `warmup:false` / `appEntry:false` | 会话没有被平台授权 | 先 `login force`，再 `chain 0`；仍不行检查账号、密码、指纹 |
 | `loginPage:false` | 网络 / DNS / TLS 不通 | `status` 看网络状态，再 `netcheck` |
 | `session:false` + `loginDeferred:true` | 窗口外默认不登录（保护会话） | 用 `chain 0 force` |
 
 ![chain 0 验证通过](assets/quickstart/10-chain-ok.png)
+
+`chain` 不检查微信票据。另用 `raw {"op":"wx.status"}` 确认凭据已导入，并运行 `raw {"op":"wx.test","slot":0}`（多人时按对应槽位调整）；若测试失败，查看错误回执和 `logs`，凭据刷新被拒绝时由账号本人重新获取并导入。
 
 ### 6.2 手动打一次卡
 
@@ -189,6 +203,7 @@ checkin
 | `already checked in` | 今天已经打过 | 正常，不会重复提交 |
 | `OUT_OF_WINDOW` | 不在 21:00–23:30 | 到点再试 |
 | `NEED_MFA` | 服务端要验证码 | 指纹不对，回第 2 步重新取 |
+| `wx ticket failed` / 缺少微信凭据 | 未能取得打卡操作票据 | 按账号槽位导入微信凭据，执行 `raw {"op":"wx.test","slot":0}` 验证；`chain` 不会检查票据 |
 | `APP_UNAVAILABLE` / `pending` | 会话未授权 | 等设备自动重试，或 `login` 后再 `checkin` |
 | `distance` 很大 / 记录异常 | 坐标不对 | 回第 3 步重新取坐标，再 `loc` |
 
@@ -220,8 +235,8 @@ status
 
 ## 8. 安全提醒
 
-- 学号密码 + 指纹 = 账号通行能力。只私下保存，不要发群、不要上传网盘或 GitHub。
-- 配置只存在设备里；`status` 输出会自动打码（学号只留前 4 位，密码 / 指纹只报是否已设置）。
+- 学号密码、浏览器指纹和微信授权凭据都属于敏感凭据。只导入本人账号并妥善保管，不要发群或上传网盘 / GitHub。
+- 凭据保存在设备 NVS；`status` 输出会脱敏学号，密码和指纹只报是否已设置。微信凭据摘要可用 `raw {"op":"wx.status"}` 查看，不回显令牌。
 - 设备只调用学校打卡接口，不要拿它做其他用途。
 - 把板子放在宿舍 WiFi 信号好的位置长期通电即可，不需要移动。
 

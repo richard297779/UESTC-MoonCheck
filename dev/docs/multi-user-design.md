@@ -22,9 +22,9 @@
 | env | 板子 | Flash / 分区表 | 状态指示 |
 | --- | --- | --- | --- |
 | `esp32-s3-devkitc-1`（default_envs） | ESP32-S3-N16R8 | 16 MB / `partitions_16mb.csv` | WS2812 @ GPIO48 |
-| `esp32-wroom-32-COM6` / `esp32-wroom-32-COM7` | 经典 ESP32-WROOM-32 | 4 MB / `partitions_4mb.csv`（方案 B，双槽 `0x1F0000`） | 普通 LED @ GPIO2 |
+| `esp32-wroom-32` | 经典 ESP32-WROOM-32 | 4 MB / `partitions_4mb.csv`（方案 B，双槽 `0x1F0000`） | 普通 LED @ GPIO2 |
 
-- 三个 env 同一份代码、同一个版本号 `FW_VERSION "0.3.1"`，不再有 `-multi` 后缀；
+- 两个 env 同一份代码、同一个版本号 `FW_VERSION "0.5.0"`，不再有 `-multi` 后缀；
 - 已删除：`WANAN_MULTIUSER` 编译宏、NVS 键 `multi_on`、`multiUserEnabled()/setMultiUserEnabled()`、`multi.set` 的 `enabled` 字段——**打几个人只由账号表决定**；
 - 每个账号带独立开关 `CheckinProfile.enabled`：关掉某人 = 他不登录、不提交、**不进「全员成功」的分母**（`RunResult.disabledCount` 单独统计）；关掉所有人 = 今晚没有要打的人，本轮按"无事可做"落定，不会整夜重试。
 

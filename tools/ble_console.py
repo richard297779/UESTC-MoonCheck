@@ -51,6 +51,10 @@
                                （wait_s = 等待平台放行的秒数，最长 900，默认 0）
     probe                      前置体检（只读，随时可用）
     checkin [force]            打卡（force=跳过"今日已打卡"检查）
+    wx status                  查看微信凭据槽位状态（不回显令牌）
+    wx import <slot> <openid> <access> <refresh> <expiresAt>
+                               导入微信授权凭据（expiresAt 为 Unix 秒；令牌不会回显）
+    wx test [slot]             测试微信换票链路，不提交打卡（默认槽位 0）
     clear                      清空 Cookie（模拟会话失效）
     notify                     查看通知通道配置 + 额外通道列表 + 今日已发条数
     notify set url=<推送地址> [style=0|1|2] [on=1] [gap=秒] [quota=条]
@@ -141,7 +145,12 @@ class Console:
         payload.setdefault("id", self.next_id)
         self.next_id += 1
         line = json.dumps(payload, ensure_ascii=False) + "\n"
-        print(f"=> {json.dumps(payload, ensure_ascii=False)}")
+        displayed = dict(payload)
+        if displayed.get("op") == "wx.import":
+            for field in ("openid", "access", "refresh"):
+                if field in displayed:
+                    displayed[field] = "<已隐藏>"
+        print(f"=> {json.dumps(displayed, ensure_ascii=False)}")
         await self.client.write_gatt_char(NUS_RX, line.encode("utf-8"), response=False)
         await asyncio.sleep(0.15)
 
@@ -161,9 +170,61 @@ class Console:
             return True
         if command == "raw":
             try:
-                await self.send(json.loads(" ".join(args)))
+                payload = json.loads(" ".join(args))
+                if not isinstance(payload, dict):
+                    print("  JSON 指令必须是对象")
+                    return True
+                await self.send(payload)
             except json.JSONDecodeError as exc:
                 print(f"  JSON 解析失败：{exc}")
+            return True
+
+        if command == "wx":
+            subcommand = args[0].lower() if args else "status"
+            if subcommand in ("status", "list"):
+                if len(args) > 1:
+                    print("  用法：wx status")
+                else:
+                    await self.send({"op": "wx.status"})
+            elif subcommand == "test":
+                if len(args) > 2:
+                    print("  用法：wx test [slot]")
+                else:
+                    try:
+                        slot = int(args[1]) if len(args) == 2 else 0
+                    except ValueError:
+                        print("  slot 必须是 0–5 的整数")
+                        return True
+                    if not 0 <= slot <= 5:
+                        print("  slot 必须是 0–5 的整数")
+                    else:
+                        await self.send({"op": "wx.test", "slot": slot})
+            elif subcommand == "import":
+                if len(args) != 6:
+                    print("  用法：wx import <slot> <openid> <access> <refresh> <expiresAt>")
+                    return True
+                try:
+                    slot = int(args[1])
+                    expires_at = int(args[5])
+                except ValueError:
+                    print("  slot 和 expiresAt 必须是整数")
+                    return True
+                if not 0 <= slot <= 5 or expires_at < 0:
+                    print("  slot 必须是 0–5 的整数，expiresAt 必须是非负 Unix 秒")
+                    return True
+                if not all(args[index] for index in (2, 3, 4)):
+                    print("  openid、access 和 refresh 不能为空")
+                    return True
+                await self.send({
+                    "op": "wx.import",
+                    "slot": slot,
+                    "openid": args[2],
+                    "access": args[3],
+                    "refresh": args[4],
+                    "expiresAt": expires_at,
+                })
+            else:
+                print("  用法：wx status | wx import <slot> <openid> <access> <refresh> <expiresAt> | wx test [slot]")
             return True
 
         # 简单映射

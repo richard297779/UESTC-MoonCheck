@@ -1,7 +1,6 @@
 # 自行编译固件
 
-> 如果你只是想把设备跑起来，**不需要看这一页**——直接下载现成固件刷入即可：
-> 见 [刷固件](../docs/flashing.md)。只有想改代码、改参数，或没有对应板型的现成固件时，才需要自行编译。
+> Releases 中现有的 v0.4.0 预编译固件不支持平台新增的微信操作票据要求。要让设备按当前平台要求打卡，请从当前源码编译后再[刷入固件](../docs/flashing.md)；待发布包含此能力的新固件后，可直接下载对应板型的发布包。
 
 ---
 
@@ -33,9 +32,9 @@ pio pkg install -g -p "platformio/toolchain-xtensa-esp32"
 | 环境名 | 适用板型 | Flash | 状态灯 |
 | --- | --- | --- | --- |
 | `esp32-s3-devkitc-1` | ESP32-S3-N16R8 | 16 MB | WS2812 @ GPIO48 |
-| `esp32-wroom-32-COM6` / `-COM7` | ESP32-WROOM-32 | 4 MB | 普通 LED @ GPIO2 |
+| `esp32-wroom-32` | ESP32-WROOM-32 | 4 MB | 普通 LED @ GPIO2 |
 
-> 换了端口就改 `platformio.ini` 里对应 env 的 `upload_port`，或者用下面的命令行加 `--upload-port COMx`。
+> 多块 WROOM 板可共用此环境；上传时用 `--upload-port COMx` 指定实际串口。`platformio.debug.ini` 另提供绑定 COM6/COM7 的调试环境。
 
 ## 2. 编译并烧录
 
@@ -46,17 +45,33 @@ pio pkg install -g -p "platformio/toolchain-xtensa-esp32"
 ```powershell
 cd firmware
 pio run -e esp32-s3-devkitc-1 -t upload      # ESP32-S3
-pio run -e esp32-wroom-32-COM6 -t upload     # 经典 ESP32（端口写在 env 里）
+pio run -e esp32-wroom-32 -t upload --upload-port COM6  # 经典 ESP32
 pio device monitor --port COM5               # 串口日志，115200
 ```
 
 只有一种固件：**打卡几个人由账号表决定**，不需要为了多人重新编译。
 
-## 3. 首次上电的日志
+## 3. 微信操作票据与凭据配置
+
+平台已要求打卡请求携带 `X-Checkin-Ticket`。当前源码会在打卡前自动通过微信小程序授权链获取短效票据，不需要手工获取或填写票据本身。账号的 CAS 登录配置（学号、密码、可选浏览器指纹）仍然需要保留。
+
+每个使用中的账号都需要本人授权的微信凭据（`openid`、`access`、`refresh`、`expiresAt`，Unix 秒）。仓库目前不包含获取初始凭据的工具；请勿使用他人凭据。通过 `ble_console.py` 的 `raw` 命令导入并测试：
+
+```text
+raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+raw {"op":"wx.status"}
+raw {"op":"wx.test","slot":0}
+```
+
+账号表为空时设备主账号使用槽位 0；账号表非空时，微信凭据槽位按账号表顺序对应（从 0 开始）。凭据保存在 NVS，刷新后会自动保存；刷新被拒绝时需由账号本人重新获取并导入。`chain` 只验证 CAS / 微应用链路，不能代替 `raw {"op":"wx.test","slot":0}`。
+
+> Releases 中的 v0.4.0 预编译固件早于此改动，不支持 `wx.*` 指令。当前源码的固件版本字符串仍为 `0.4.0`，请从当前源码编译，不要仅凭版本号判断功能。
+
+## 4. 首次上电的日志
 
 ```text
 I main: === WANAN checkin device booting ===
-I main: firmware 0.3.1, built ...
+I main: firmware 0.4.0, built ...
 I logger: logger ready (ring=ok)
 I app_config: config loaded: ready=0 user=unset bfp=0
 I status_led: led ready: pin=48 rgb=1
@@ -67,7 +82,7 @@ I main: setup done, free heap=... B, psram=...
 
 未配置时 LED 蓝色慢闪。看到 `ble ready` 就可以用蓝牙配置了 → [快速开始](../docs/quickstart.md)。
 
-## 4. 可调项
+## 5. 可调项
 
 | 想改什么 | 改哪里 |
 | --- | --- |
@@ -78,7 +93,7 @@ I main: setup done, free heap=... B, psram=...
 
 > 改了分区表就必须整片重刷（含 `partitions.bin`），只刷 app 会错位，配置也会丢。
 
-## 5. 编译期常见报错
+## 6. 编译期常见报错
 
 | 现象 | 处理 |
 | --- | --- |
@@ -88,7 +103,7 @@ I main: setup done, free heap=... B, psram=...
 | PSRAM 报错 / 容量不对 | 先 `esptool.py flash_id` 核实；QSPI PSRAM 把 `board_build.arduino.memory_type` 改成 `qio_qspi` |
 | 串口完全没输出 | 换 USB 口 / 数据线；确认 `upload_port` 正确；见下一节 |
 
-## 6. 烧录失败
+## 7. 烧录失败
 
 **最常见的原因是没进入下载模式。** 按顺序试：
 
@@ -107,8 +122,8 @@ I main: setup done, free heap=... B, psram=...
   0x10000 .pio\build\esp32-s3-devkitc-1\firmware.bin
 ```
 
-## 7. 安全说明
+## 8. 安全说明
 
-- `auth.set` 只写不读；`status` 里学号打码，密码和指纹只显示「是否已设置」。
+- `auth.set` 只写不读；`status` 里学号打码，密码和指纹只显示「是否已设置」；`wx.status` 不回显微信令牌。
 - 日志中的 Cookie / 密码 / 验证码会被自动脱敏，不会明文输出。
-- 设备在 NVS 中**明文**保存凭据，别把板子转借他人；丢失后立即改密码。
+- 设备在 NVS 中**明文**保存学号、密码和微信授权凭据，别把板子转借他人；设备丢失后立即撤销/更新相关凭据。

@@ -21,7 +21,7 @@
 
 | 项目 | ESP32-S3-N16R8 | ESP32-WROOM-32（经典 ESP32） |
 | --- | --- | --- |
-| PlatformIO 环境 | `esp32-s3-devkitc-1` | `esp32-wroom-32-COM6` / `-COM7` |
+| PlatformIO 环境 | `esp32-s3-devkitc-1` | `esp32-wroom-32`（调试专用 `platformio.debug.ini` 另有 COM6/COM7 环境） |
 | esptool `--chip` | `esp32s3` | `esp32` |
 | **bootloader 偏移** | **`0x0`** | **`0x1000`** ← 最容易搞错的一处 |
 | partitions.bin | `0x8000` | `0x8000` |
@@ -43,7 +43,7 @@
 | 场景 | 下载 | 刷哪里 | 会不会丢已配好的 WiFi/账号 |
 | --- | --- | --- | --- |
 | **第一次拿到板子**（出厂镜像） | `wanan-<ver>-<板型>-merged.bin` | 一个文件，地址 `0x0` | **一定会清空**（见 1.3） |
-| **升级固件**（已经配好了） | `wanan-<ver>-<板型>-app.zip` 里的 `firmware.bin` | 地址 `0x10000` | 不会（nvs 在 `0x9000`，不碰） |
+| **升级固件**（已经配好了） | `wanan-<ver>-<板型>-full.zip` 里的 `firmware.bin` | 地址 `0x10000` | 不会（nvs 在 `0x9000`，不碰） |
 | 换了分区表（例如 4 MB 从旧表改成双槽 `0x1F0000`） | `-full.zip` 四个文件 | 按 1.1 的偏移表 | 不会（nvs 偏移没变） |
 
 ### 1.3 为什么合并包一定会清配置（实测）
@@ -112,20 +112,22 @@ VSCode + PlatformIO 插件：左下 Environment 选择器切到目标 env → �
 ```powershell
 # Windows PowerShell
 pio run -d firmware -e esp32-s3-devkitc-1
-pio run -d firmware -e esp32-wroom-32-COM6
+pio run -d firmware -e esp32-wroom-32
 ```
 
 ```bash
 # macOS / Linux
 pio run -d firmware -e esp32-s3-devkitc-1
-pio run -d firmware -e esp32-wroom-32-COM6
+pio run -d firmware -e esp32-wroom-32
 ```
 
-成功标志（本机实测）：
+成功标志（本次 ESP32-S3 / WROOM 构建实测）：
 
 ```
-RAM:   [=         ]  17.3% ( 56,596 bytes of 327,680 bytes)
-Flash: [===       ]  30.3% ( 1,270,949 bytes of 4,194,304 bytes)   # S3，4MB 视角
+RAM:   17.4% (56,868 bytes of 327,680 bytes)       # S3
+Flash: 33.0% (1,384,801 bytes of 4,194,304 bytes)  # S3 app 分区
+RAM:   18.9% (61,796 bytes of 327,680 bytes)       # WROOM
+Flash: 73.6% (1,495,517 bytes of 2,031,616 bytes)  # WROOM app 分区
 => SUCCESS
 ```
 
@@ -153,7 +155,7 @@ $A0   = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32\tool
 
 ```powershell
 # 经典 ESP32（4MB）：bootloader 传 0x1000，其余相同
-$B = "firmware\.pio\build\esp32-wroom-32-COM6"
+$B = "firmware\.pio\build\esp32-wroom-32"
 & $PY $ESPT --chip esp32 merge_bin -o release\wanan-0.3.1-wroom32-4mb-merged.bin `
     -fm dio -ff 40m -fs 4MB -t 0x0 `
     0x1000 "$B\bootloader.bin"  0x8000 "$B\partitions.bin"  0xe000 $A0  0x10000 "$B\firmware.bin"
@@ -323,9 +325,9 @@ WiFi、账号表、坐标、通知地址都会回到默认值。
 
 ---
 
-## 7. 【使用者】刷完后的蓝牙配置（8 项，一次做完）
+## 7. 【使用者】刷完后的蓝牙配置（11 项，一次做完）
 
-网页工具**只负责刷固件**，配置要走蓝牙（BLE）。这一步无法省掉——密码和指纹必须进设备。
+网页工具**只负责刷固件**，配置要走蓝牙（BLE）。这一步无法省掉——密码和指纹必须进设备。要使用新微信票据流程，必须从当前源码编译；Releases 中的 v0.4.0 固件不支持该流程。每个账号还需准备本人授权的微信凭据，仓库目前不提供获取初始凭据的工具。
 
 ### 7.1 用电脑（推荐）
 
@@ -347,11 +349,14 @@ python tools\ble_console.py --name WANAN-1A2B
 wifi UESTC-WiFi                          # 开放网络省略密码；普通网络写 wifi <ssid> <pass>
 netcheck                                 # 出现 204 才算放行；302/HTML 说明还要网页认证
 auth <学号> <密码> <浏览器指纹>            # 指纹见 7.3
+raw {"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
 loc <纬度> <经度> <地址>                # 必须在宿舍现场实测（取法见 7.2）
 sched 22:00 23:30 30                     # 打卡时间 / 窗口截止 / 抖动
 auto on                                  # 打开每日自动
 notify set url=<你的推送地址> style=0     # 手机通知；Bark 用 0，ntfy 用 1，自建中转用 2
 notify test 你好                          # 手机应立刻收到一条「[WANAN-xxxx] 通知」
+raw {"op":"wx.status"}                  # 确认微信凭据槽位
+raw {"op":"wx.test","slot":0}           # 换票链路测试，不提交打卡
 ```
 
 多人（可选）：
@@ -367,11 +372,12 @@ multi probe force                              # 窗口外完整演练（只体�
 
 ```
 status          # 看 wifiConfigured / user / fingerprintSet / schedule / notifyOn
-chain 0         # loginPage→登录→进入打卡界面→业务接口 全链路自测，看 canCheckin
+chain 0         # loginPage→登录→进入打卡界面→业务接口自测；不检查微信票据
+raw {"op":"wx.test","slot":0} # 单独验证微信票据获取
 probe           # 只读体检：h5Reached / sessionValid / inWindow / 今日状态
 ```
 
-`chain 0` 里 `appEntry:true` + `canCheckin:true` = 今晚能自动打上。
+`chain 0` 里 `appEntry:true` + `canCheckin:true` 且 `wx.test` 成功，才分别确认平台会话与微信票据链路正常。
 
 ### 7.2 坐标怎么取（必须在宿舍现场）
 
@@ -399,10 +405,12 @@ WiFi 定位可能漂几十米，**晚上在宿舍床上取**，不要在教学�
 ```json
 {"id":1,"op":"wifi.connect","ssid":"UESTC-WiFi"}
 {"id":2,"op":"auth.set","user":"<学号>","pass":"<密码>","bfp":"<指纹>"}
-{"id":3,"op":"loc.set","lat":30.754980,"lng":103.933880,"name":"示例地点"}
-{"id":4,"op":"sched.set","checkin_at":"22:00","window_end":"23:30","jitter_s":30,"auto":true}
-{"id":5,"op":"notify.set","url":"<推送地址>","style":0,"on":1}
-{"id":6,"op":"test.chain","wait_s":0}
+{"id":3,"op":"wx.import","slot":0,"openid":"<本人openid>","access":"<access token>","refresh":"<refresh token>","expiresAt":1792890000}
+{"id":4,"op":"loc.set","lat":30.754980,"lng":103.933880,"name":"示例地点"}
+{"id":5,"op":"sched.set","checkin_at":"22:00","window_end":"23:30","jitter_s":30,"auto":true}
+{"id":6,"op":"notify.set","url":"<推送地址>","style":0,"on":1}
+{"id":7,"op":"wx.test","slot":0}
+{"id":8,"op":"test.chain","wait_s":0}
 ```
 
 指令全集见 `docs/ble-protocol.md` §4.4。
@@ -426,7 +434,7 @@ jobs:
       matrix:
         include:
           - { env: esp32-s3-devkitc-1,     chip: esp32s3, fm: dio, ff: 80m, fs: 16MB, boot: "0x0",    tag: s3-n16r8 }
-          - { env: esp32-wroom-32-COM6,    chip: esp32,   fm: dio, ff: 40m, fs: 4MB,  boot: "0x1000", tag: wroom32-4mb }
+          - { env: esp32-wroom-32,         chip: esp32,   fm: dio, ff: 40m, fs: 4MB,  boot: "0x1000", tag: wroom32-4mb }
     steps:
       - uses: actions/checkout@v4
       - uses: platformio/platformio-core-action@v1          # 或 pip install platformio==6.2.0
@@ -460,7 +468,7 @@ jobs:
 - [ ] Release 正文含：型号区分说明、`0x0` vs `0x1000` 偏移表、**合并包清配置警告**、升级只刷 `0x10000` 的说明
 - [ ] 正文含 BLE 配置入口链接（`docs/quickstart.md`），别让使用者以为刷完就能自动打卡
 - [ ] 没有把 `.pio/`、`capture/`、`config.json`、`*.har`、真实坐标/学号/指纹打进资产或正文
-- [ ] 自己先用一块板子走一遍「合并包 → 配置 → `chain 0`」全流程，再发出去
+- [ ] 自己先用一块板子走一遍「合并包 → 配置 → `chain 0` + `wx.test`」全流程，再发出去
 
 ---
 
@@ -468,8 +476,8 @@ jobs:
 
 | 能省 | 不能省 |
 | --- | --- |
-| 使用者的 PlatformIO / 工具链 / 编译等待 | 浏览器取 `MULTIFACTOR_BROWSER_FINGERPRINT`（F2 验证码中继未实装） |
-| 源码仓库都不用 clone（只要下载 bin） | 一次蓝牙配置（WiFi + 账号 + 坐标 + 时间），网页工具不做这件事 |
+| 使用者的 PlatformIO / 工具链 / 编译等待 | 浏览器取 `MULTIFACTOR_BROWSER_FINGERPRINT`、准备并导入本人微信授权凭据（F2 验证码中继未实装） |
+| 有当前票据能力的发布包后可不 clone 源码 | 一次蓝牙配置（WiFi + 账号 + 微信凭据 + 坐标 + 时间），网页工具不做这件事 |
 | 升级只刷 `firmware.bin` 一个文件 | 宿舍现场取坐标 |
 | —— | 校园网放行（`netcheck` 必须 204；若某接入点要求 Portal，设备过不了） |
 

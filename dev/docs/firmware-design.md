@@ -5,6 +5,10 @@
 > 上游依据：`docs/api-contract.md` v1.2（接口契约）、`docs/python-verification-plan.md`（已验证的链路与算法）。
 > Python 参考实现 `dev/tools/pc_reference/` 已跑通全链路，**固件就是把它翻译成 C++**。
 
+> **当前状态说明（2026-10-23 之后）：** 本文记录的是固件早期基础设计，不再完整描述当前实现。当前打卡除 CAS / 微应用会话外，还必须在提交前获取微信小程序操作票据，并在请求中携带 `X-Checkin-Ticket`。固件使用 `wx_oauth`、`wx_mmtls`、`wx_wire`、`wx_credential_store` 等模块完成授权和票据获取；入口及验证命令见[BLE 协议](ble-protocol.md)与[用户指令手册](../../docs/commands.md)。关于历史接口抓包与当前实现的差别，见[接口契约补充](api-contract.md)。
+
+当前微信凭据按账号槽位保存在 NVS：账号表为空时主账号用槽位 0；多人时槽位按账号表顺序从 0 开始。`chain` 不覆盖该链路，须另行执行 `wx.test` 验证。
+
 ---
 
 ## 1. 范围与阶段划分
