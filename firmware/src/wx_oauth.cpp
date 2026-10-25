@@ -52,6 +52,9 @@ OauthResult postJson(HttpClient& http, const char* path, const String& body,
   }
   if (!response.ok()) {
     LOG_W(kTag, "%s: http %d body=%.60s", path, response.status, response.body.c_str());
+    // 403 = 服务端拒绝该凭据（实测新扫码账号的 access token 可能在有效期内
+    // 被提前作废）：归为 Rejected 让调用方走"强制刷新并重试"的自愈路径
+    if (response.status == 403) return OauthResult::Rejected;
     return OauthResult::Network;
   }
   DeserializationError err = deserializeJson(doc, response.body);
