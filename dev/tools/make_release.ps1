@@ -14,7 +14,7 @@
     4. 用 gh 自动创建/更新 GitHub Release 并上传全部资产（没有 gh 时打印手动上传指引）
 
   可选参数（双击一般不需要）：
-    -Version 0.5.0      覆盖自动读到的版本号
+    -Version 0.5.1      覆盖自动读到的版本号
     -NoUpload           只打包，不上传
     -SkipDesktop        不附带桌面版可执行文件
     -Prerelease         Release 标记为预发布
