@@ -1532,7 +1532,20 @@ Result CommandRouter::ensureWxTicket(int slot, String& outTicket, String& outErr
   }
   String loginBuffer;
   HttpResponse raw;
-  if (wx::fetchLoginBuffer(cred, loginBuffer, raw) != wx::OauthResult::Ok) {
+  wx::OauthResult lb = wx::fetchLoginBuffer(cred, loginBuffer, raw);
+  if (lb == wx::OauthResult::Rejected) {
+    // access token 可能被服务端提前作废（实测首次授权后 ~8 分钟即发生）：
+    // 强制刷新凭据并原地重试一次，refresh token 仍有效即可自愈
+    LOG_W(tag, "login_buffer rejected, force refresh");
+    HttpResponse rawR;
+    wx::OauthCredentials rotated;
+    if (wx::refreshCredentials(cred, rotated, rawR) == wx::OauthResult::Ok) {
+      m_wxCred->save(static_cast<size_t>(slot), rotated);
+      cred = rotated;
+      lb = wx::fetchLoginBuffer(cred, loginBuffer, raw);
+    }
+  }
+  if (lb != wx::OauthResult::Ok) {
     outError = "login_buffer fetch failed";
     return Result::AuthFailed;
   }
@@ -1551,8 +1564,19 @@ Result CommandRouter::ensureWxTicket(int slot, String& outTicket, String& outErr
   }
   HttpResponse raw2;
   if (wx::fetchLoginBuffer(cred, loginBuffer, raw2) != wx::OauthResult::Ok) {
-    outError = "login_buffer#2 fetch failed";
-    return Result::AuthFailed;
+    HttpResponse rawR;
+    wx::OauthCredentials rotated;
+    if (wx::refreshCredentials(cred, rotated, rawR) == wx::OauthResult::Ok) {
+      m_wxCred->save(static_cast<size_t>(slot), rotated);
+      cred = rotated;
+      if (wx::fetchLoginBuffer(cred, loginBuffer, raw2) != wx::OauthResult::Ok) {
+        outError = "login_buffer#2 fetch failed";
+        return Result::AuthFailed;
+      }
+    } else {
+      outError = "login_buffer#2 fetch failed";
+      return Result::AuthFailed;
+    }
   }
   wx::WxCodeResult code2 = wx::wxGetCode(loginBuffer, kWxCheckinAppId);
   if (code2.result != wx::WxResult::Ok) {
