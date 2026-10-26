@@ -65,7 +65,12 @@ def check_package(directory, require_clean=False):
     manifest = json.loads((directory / "release-manifest.json").read_text(encoding="utf-8-sig"))
     version = (ROOT / "VERSION").read_text().strip()
     assert manifest["version"] == version, "Package version differs from source"
-    assert manifest["sourceCommit"] == subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "Package source commit differs from HEAD"
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    assert manifest.get("documentationCommit", manifest["sourceCommit"]) == head, "Package provenance differs from HEAD"
+    if manifest["sourceCommit"] != head:
+        assert subprocess.run(["git", "merge-base", "--is-ancestor", manifest["sourceCommit"], head], cwd=ROOT).returncode == 0, "Binary source commit is not an ancestor"
+        changed = subprocess.check_output(["git", "diff", "--name-only", manifest["sourceCommit"], head], cwd=ROOT, text=True).splitlines()
+        assert all(name.endswith(".md") or name in {"dev/tools/make_release.ps1", "tools/check_project.py"} for name in changed), "Runtime code changed after binary build"
     if require_clean:
         assert manifest["sourceDirty"] is False, "Release was packaged from a dirty source tree"
         assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip(), "Working tree is not clean"
@@ -77,7 +82,8 @@ def check_package(directory, require_clean=False):
         assert len(data) == entry["size"] and digest(data) == entry["sha256"], f"Bad manifest digest: {name}"
         expected[name] = data
     guide = expected["PACKAGE.md"].decode("utf-8-sig")
-    assert f"https://github.com/{manifest['repository']}/blob/v{version}/docs/quickstart.md" in guide, "Package guide link is broken"
+    guide_ref = manifest.get("documentationCommit", f"v{version}")
+    assert f"https://github.com/{manifest['repository']}/blob/{guide_ref}/docs/quickstart.md" in guide, "Package guide link is broken"
     if manifest["android"] is not None:
         assert manifest["android"]["version"] == version and manifest["android"]["package"] == "io.mooncheck.app", "Wrong APK metadata"
         apk = directory / f"MoonCheck-{version}-android-debug.apk"

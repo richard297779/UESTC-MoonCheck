@@ -7,7 +7,7 @@
 - 仓库根目录 `VERSION` 是项目与 Android versionName 的来源；固件 `FW_VERSION` 必须与它一致。
 - 当前 `0.6.0`，Android versionCode 为 `600`，BLE 协议仍为 `1`。
 - 历史桌面版本独立维护，不通过改数字假装支持新票据。
-- 初次 APK 尚未做真实手机 BLE 联调，本次使用 GitHub prerelease 标记；正式验收清单见 [项目体检](../../docs/project-health.md)。
+- 2026-10-26 用户确认 APK 实际联调通过、功能全部正常；v0.6.0 已从预发布转为正式 Latest。确认来源及未提供的环境信息见 [项目体检](../../docs/project-health.md)。
 - `make_release.ps1` **不编译，默认不上传**；没有 `-Upload` 时只生成本地包。
 
 ## 1. 构建并验证
@@ -58,7 +58,7 @@ python tools/check_project.py --release-dir release/v0.6.0
 git add <本次源码和文档路径>
 git commit -m "release: ship v0.6.0 with Android BLE controller"
 git push origin main
-./dev/tools/make_release.ps1 -Upload -Prerelease -Repo richard297779/UESTC-MoonCheck
+./dev/tools/make_release.ps1 -Upload -Repo richard297779/UESTC-MoonCheck
 ```
 
 上传流程检查工作区干净、远端 main 与本地 HEAD 相同、origin 与指定 Repo 一致，然后创建注释标签并推送。`gh release create` 使用 `--verify-tag --target <HEAD>`；先创建草稿，逐个核对 GitHub 返回的文件名、大小及 SHA-256 后再公开。任何上传不完整都保留草稿，不宣称发布完成。不覆盖旧标签或旧版本资产。
