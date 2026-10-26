@@ -3,6 +3,9 @@
 // ============================================================================
 
 #include "command_router.h"
+#include <WiFi.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
 
 #include <memory>
 #include <new>
@@ -203,8 +206,33 @@ String CommandRouter::buildStatusJson() const {
   out += String(ESP.getPsramSize() / 1024);
   out += ",\"freeHeapKB\":";
   out += String(ESP.getFreeHeap() / 1024);
-  out += "},\"net\":{\"state\":\"";
+  out += "},\"runtime\":";
+  // Allocator low-water marks cover activity between status polls, since boot.
+  JsonDocument runtime;
+  const uint32_t total = ESP.getHeapSize();
+  const uint32_t minimum = ESP.getMinFreeHeap();
+  runtime["boardId"] = BoardProfile::kId;
+  runtime["chipModel"] = ESP.getChipModel();
+  runtime["uptimeSeconds"] = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
+  runtime["heapTotalBytes"] = total;
+  runtime["heapFreeBytes"] = ESP.getFreeHeap();
+  runtime["heapMinFreeBytes"] = minimum;
+  runtime["heapPeakUsedBytes"] = total >= minimum ? total - minimum : 0;
+  runtime["heapLargestBlockBytes"] = ESP.getMaxAllocHeap();
+  runtime["psramTotalBytes"] = ESP.getPsramSize();
+  runtime["psramFreeBytes"] = ESP.getFreePsram();
+  runtime["psramMinFreeBytes"] = ESP.getMinFreePsram();
+  runtime["netTaskStackFreeMinBytes"] = uxTaskGetStackHighWaterMark(nullptr);
+  runtime["netTaskCore"] = AppConst::kNetTaskCore;
+  // ArduinoJson 7 clears String destinations before writing. Serialize this
+  // nested object separately so the existing status prefix is preserved.
+  String runtimeJson;
+  serializeJson(runtime, runtimeJson);
+  out += runtimeJson;
+  out += ",\"net\":{\"state\":\"";
   out += wifiState;
+  out += "\",\"ssid\":\"";
+  out += WiFi.isConnected() ? escapeJson(WiFi.SSID()) : String("");
   out += "\",\"ip\":\"";
   out += (m_wifi != nullptr) ? m_wifi->ip() : String("0.0.0.0");
   out += "\",\"rssi\":";
@@ -472,15 +500,15 @@ void CommandRouter::handleHello(int32_t id) {
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   esp_read_mac(btMac, ESP_MAC_BT);
 
-  char data[448];
+  char data[512];
   snprintf(data, sizeof(data),
-           "{\"fw\":\"%s\",\"proto\":%d,\"maxCommandBytes\":4095,\"built\":\"%s\","
+           "{\"boardId\":\"%s\",\"fw\":\"%s\",\"proto\":%d,\"maxCommandBytes\":4095,\"built\":\"%s\","
            "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"btMac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"bleName\":\"%s-%02X%02X\","
            "\"flashMB\":%u,\"psramKB\":%u,\"caps\":[\"wifi\",\"ble\",\"cas\",\"checkin\",\"test\","
            "\"cron\",\"logs\"]}",
-           FW_VERSION, FW_PROTO_VERSION, FW_BUILD_TIME, mac[0], mac[1], mac[2], mac[3], mac[4],
+           BoardProfile::kId, FW_VERSION, FW_PROTO_VERSION, FW_BUILD_TIME, mac[0], mac[1], mac[2], mac[3], mac[4],
            mac[5], btMac[0], btMac[1], btMac[2], btMac[3], btMac[4], btMac[5],
            FW_DEVICE_NAME_PREFIX, btMac[4], btMac[5],
            static_cast<unsigned>(ESP.getFlashChipSize() / (1024 * 1024)),
@@ -657,7 +685,8 @@ void CommandRouter::handleAccountEnable(JsonObjectConst request, int32_t id) {
 }
 
 void CommandRouter::handleLogs(JsonObjectConst request, int32_t id) {
-  const int32_t lines = request["n"] | 30;
+  const int32_t requested = request["n"] | 30;
+  const int32_t lines = constrain(requested, 1, 60);
   const String text = Logger::instance().tail(static_cast<uint16_t>(lines));
   String data = "{\"lines\":";
   data += String(lines);

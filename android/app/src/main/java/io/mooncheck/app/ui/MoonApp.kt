@@ -39,9 +39,11 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
     var devices by rememberSaveable { mutableStateOf(false) }
     var form by remember { mutableStateOf<CommandForm?>(null) }
     var confirm by remember { mutableStateOf<ConfirmAction?>(null) }
+    var runtimePage by rememberSaveable { mutableStateOf(false) }
+    var developer by remember { mutableStateOf(false) }
     var diagnostics by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.ready) {
-        if (!state.ready) { form = null; confirm = null }
+        if (!state.ready) { form = null; confirm = null; developer = false }
     }
     val enabled = state.ready && !state.busy
     fun execute(title: String, op: String, fields: JsonObject = JsonObject(emptyMap()), timeout: Long = 15000) { vm.repository.execute(title, op, fields, timeout) }
@@ -57,7 +59,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 val icons = listOf(Icons.Rounded.SpaceDashboard, Icons.Rounded.Tune, Icons.Rounded.PeopleAlt, Icons.AutoMirrored.Rounded.HelpOutline)
                 pageTitles.forEachIndexed { index, title -> NavigationBarItem(selected = tab == index,
-                    onClick = { tab = index; diagnostics = false }, icon = { Icon(icons[index], title) }, label = { Text(title) }) }
+                    onClick = { tab = index; diagnostics = false; runtimePage = false; developer = false; vm.repository.clearLogs() }, icon = { Icon(icons[index], title) }, label = { Text(title) }) }
             }
         }
     ) { padding ->
@@ -77,7 +79,14 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary)
                 }
                 when (tab) {
-                    0 -> if (diagnostics) {
+                    0 -> if (runtimePage) {
+                        TextButton(onClick = { runtimePage = false; developer = false; vm.repository.clearLogs() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null); Text("返回控制台") }
+                        RuntimePanel(state, enabled, developer,
+                            refresh = { execute("刷新运行状态", "status") },
+                            toggleDeveloper = { developer = it; if (!it) vm.repository.clearLogs() },
+                            readLogs = { execute("读取设备日志", "logs", buildJsonObject { put("n", 30) }) },
+                            clearLogs = { vm.repository.clearLogs() })
+                    } else if (diagnostics) {
                         TextButton(onClick = { diagnostics = false }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null); Text("返回控制台") }
                         PageHeading("诊断工具", "逐项检查，明确问题发生在哪里")
                         Section("基础检查") {
@@ -85,7 +94,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                             ActionRow("网络连通检查", "由设备访问 generate_204", Icons.Rounded.NetworkCheck, enabled) { execute("网络检查", "test.http", buildJsonObject { put("url", "http://connect.rom.miui.com/generate_204") }, 120000) }
                             ActionRow("微信取票测试", "只测试，不提交打卡", Icons.Rounded.VerifiedUser, enabled) { pick(Forms.wxTest) }
                             ActionRow("全链路检查", "可能登录平台，不提交打卡", Icons.Rounded.Route, enabled) { pick(Forms.chain) }
-                            ActionRow("读取日志状态", "保护隐私，不展示原始文本", Icons.AutoMirrored.Rounded.Article, enabled) { execute("读取日志", "logs", buildJsonObject { put("n", 30) }) }
+                            ActionRow("开发者日志", "查看脱敏日志与内存状态", Icons.AutoMirrored.Rounded.Article, true) { runtimePage = true; developer = false }
                         }
                         Section("最近活动") {
                             if (state.events.isEmpty()) Text("暂无活动。完成操作后将在这里显示。", style = MaterialTheme.typography.bodyMedium)
@@ -101,6 +110,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                             Metric("设备时间", if (!state.ready) "待同步" else if (state.synced) "已校时" else "未校时", Icons.Rounded.Schedule, Modifier.weight(1f))
                         }
                         Section("快捷操作") {
+                            ActionRow("运行状态", "网络名称、内存峰值与开发者日志", Icons.Rounded.Memory, true) { runtimePage = true }
                             ActionRow("设备体检", "检查当前会话和前置状态", Icons.Rounded.HealthAndSafety, enabled) { execute("设备体检", "test.probe", timeout = 120000) }
                             ActionRow("手动提交打卡", "会真实提交，执行前请确认", Icons.Rounded.TaskAlt, enabled) {
                                 confirm = ConfirmAction("提交本次打卡？", "将向当前设备发送真实提交指令。默认遵守时间窗口且不跳过今日已提交检查。请确认设备与账号正确。") {
@@ -390,4 +400,67 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
     }
     OutlinedButton(onClick = { uri.openUri("https://github.com/richard297779/UESTC-MoonCheck") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, null, Modifier.size(18.dp)); Text(" 查看项目完整指南") }
     Text("帮助内容可离线阅读；外部指南将通过浏览器打开。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+
+@Composable private fun RuntimePanel(state: DeviceSnapshot, enabled: Boolean, developer: Boolean,
+    refresh: () -> Unit, toggleDeveloper: (Boolean) -> Unit, readLogs: () -> Unit, clearLogs: () -> Unit) {
+    val runtime = state.runtime
+    fun bytes(value: Long?): String = value?.let { String.format(java.util.Locale.ROOT, "%.1f KiB", it / 1024.0) } ?: "固件未提供"
+    PageHeading("运行状态", "设备实时回读 · 手动刷新，降低蓝牙负担")
+    OutlinedButton(onClick = refresh, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(8.dp)); Text("刷新运行状态") }
+    Text(if (!state.ready) "当前未连接，连接后读取设备状态" else if (state.statusReadAt > 0) "最近读取：" + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date(state.statusReadAt)) else "尚未读取",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Section("网络与设备") {
+        RuntimeValue("已连接网络", if (state.ready && state.wifiConnected) state.wifi else "未连接")
+        RuntimeValue("IP 地址", runtime.ip)
+        RuntimeValue("信号强度", runtime.rssi?.let { "$it dBm" } ?: "固件未提供")
+        RuntimeValue("板型", runtime.board)
+        RuntimeValue("芯片", runtime.chip)
+        RuntimeValue("固件版本", state.firmware)
+        RuntimeValue("运行时长", runtime.uptime?.let { "${it / 86400} 天 ${(it / 3600) % 24} 小时 ${(it / 60) % 60} 分" } ?: "固件未提供")
+    }
+    if (runtime.board != "—" && runtime.board !in setOf("s3-n16r8", "wroom32-4mb")) {
+        Text("此板型未经实际验证，欢迎向开发者反馈；请查看帮助中的硬件验证说明。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+    }
+    Section("内部内存") {
+        RuntimeValue("堆总量", bytes(runtime.total))
+        RuntimeValue("当前可用", bytes(runtime.free))
+        RuntimeValue("使用峰值 · 本次开机", bytes(runtime.peak))
+        RuntimeValue("历史最低可用", bytes(runtime.minimum))
+        RuntimeValue("最大连续可用块", bytes(runtime.largest))
+        Text("峰值为分配器低水位推算的诊断值，非精确分配追踪；重启后重新统计，不含外部 PSRAM。旧固件缺失的指标显示“固件未提供”。", style = MaterialTheme.typography.bodySmall)
+    }
+    Section("外部 PSRAM") {
+        if (runtime.psramTotal == 0L) Text("此设备没有可用 PSRAM") else {
+            RuntimeValue("总量", bytes(runtime.psramTotal)); RuntimeValue("当前可用", bytes(runtime.psramFree))
+            RuntimeValue("历史最低可用", bytes(runtime.psramMinimum))
+        }
+    }
+    Section("开发者选项") {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { Text("查看设备日志", style = MaterialTheme.typography.titleMedium); Text("仅当前连接保留，敏感行会隐藏", style = MaterialTheme.typography.bodySmall) }
+            Switch(checked = developer, onCheckedChange = toggleDeveloper, enabled = state.ready)
+        }
+        if (developer) {
+            RuntimeValue("网络任务栈最低余量", bytes(runtime.stackMinimum))
+            Text("只读取设备已有日志，不触发登录、取票或提交。日志可能仍含网络名等环境信息，请勿直接公开。", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = readLogs, enabled = enabled) { Text("读取最近 30 行") }
+                TextButton(onClick = clearLogs) { Text("清空手机显示") }
+            }
+            Text("设备环形日志已覆盖 ${state.logDropped} 行", style = MaterialTheme.typography.bodySmall)
+            if (state.deviceLogs.isEmpty()) Text("暂无日志，点击读取后查看。", style = MaterialTheme.typography.bodyMedium)
+            state.deviceLogs.forEach { line ->
+                Text(line, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable private fun RuntimeValue(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    }
 }

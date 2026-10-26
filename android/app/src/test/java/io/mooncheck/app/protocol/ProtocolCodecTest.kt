@@ -9,6 +9,21 @@ class ProtocolCodecTest {
     private fun chunk(index: Int, total: Int, bytes: ByteArray) = buildJsonObject {
         put("seq", index); put("of", total); put("b64", Base64.getEncoder().encodeToString(bytes))
     }.toString().plus("\n").toByteArray()
+    @Test fun productionFirmwareStatusSurvivesSmallMtuChunks() {
+        val text = javaClass.getResource("/firmware-status.json")!!.readText()
+        val expected = ProtocolCodec.json.parseToJsonElement(text).jsonObject
+        val bytes = expected.toString().toByteArray(Charsets.UTF_8)
+        val pieces = bytes.asList().chunked(96).map { it.toByteArray() }
+        val assembler = FrameAssembler()
+        val decoded = mutableListOf<JsonObject>()
+        pieces.forEachIndexed { index, piece ->
+            chunk(index, pieces.size, piece).asList().chunked(17).forEach { packet -> decoded += assembler.feed(packet.toByteArray()) }
+        }
+        assertEquals(expected, decoded.single())
+        assertEquals("0.7.0", decoded.single().obj("data").text("fw"))
+        assertEquals(220000L, decoded.single().obj("data").obj("runtime")["heapPeakUsedBytes"]!!.jsonPrimitive.long)
+        assertTrue(decoded.single().obj("data").obj("net").text("ssid").contains("宿舍"))
+    }
     @Test fun requestPreservesSpacesAndEscapes() {
         val bytes = ProtocolCodec.request(7, "wifi.set", buildJsonObject { put("ssid", "宿舍 WiFi"); put("pass", " p\"a\\ss ") })
         val frame = ProtocolCodec.decode(bytes)

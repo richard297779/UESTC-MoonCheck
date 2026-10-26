@@ -11,7 +11,7 @@ android {
         applicationId = "io.mooncheck.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 600
+        versionCode = 700
         versionName = rootProject.file("../VERSION").readText().trim()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

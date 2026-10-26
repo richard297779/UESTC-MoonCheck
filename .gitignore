@@ -18,7 +18,11 @@ firmware/.pio/
 .pio/
 .pioenvs/
 .piolibdeps/
-release/
+# Versioned release workspace; new binaries and build stages stay local.
+/release/*
+!/release/README.md
+!/release/v*/
+/release/v*/**
 *.bin
 *.elf
 *.map
@@ -53,3 +57,19 @@ android/keystore.properties
 *.keystore
 *.apk
 *.aab
+
+# Historical tracked files: exceptions must follow generic binary exclusions.
+!/release/v0.4.0/notes-0.4.0.md
+!/release/v0.5.0/notes-0.5.0.md
+!/release/v0.7.0/CHANGELOG.md
+!/release/v0.5.1/sha256.txt
+!/release/v0.3.0/wanan-0.3.0-s3-n16r8-full.zip
+!/release/v0.3.0/wanan-0.3.0-wroom32-4mb-full.zip
+!/release/v0.3.1/wanan-0.3.1-s3-n16r8-full.zip
+!/release/v0.3.1/wanan-0.3.1-wroom32-4mb-full.zip
+!/release/v0.4.0/wanan-0.4.0-s3-n16r8-full.zip
+!/release/v0.4.0/wanan-0.4.0-wroom32-4mb-full.zip
+!/release/v0.5.0/wanan-0.5.0-s3-n16r8-full.zip
+!/release/v0.5.0/wanan-0.5.0-s3-n16r8-merged.bin
+!/release/v0.5.0/wanan-0.5.0-wroom32-4mb-full.zip
+!/release/v0.5.0/wanan-0.5.0-wroom32-4mb-merged.bin

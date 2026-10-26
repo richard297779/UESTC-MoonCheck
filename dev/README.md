@@ -10,6 +10,8 @@
 
 ---
 
+工作区路径及缓存边界见[目录约定](docs/workspace-layout.md)；发行文件统一按版本归档，入口见[发行索引](../release/README.md)。
+
 ## 目录结构
 
 ```
@@ -27,6 +29,8 @@ mooncheck/
 ```
 
 ## 文档索引
+
+v0.7.0 多板型实现与验收边界见[扩展方案](docs/board-expansion-plan.md)及[板型矩阵](../docs/board-support.md)。APK 新增运行状态与开发者脱敏日志；新增型号未经实际验证。
 
 | 文档 | 内容 |
 | --- | --- |

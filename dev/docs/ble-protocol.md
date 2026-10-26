@@ -1,3 +1,15 @@
+# v0.7.0 运行状态扩展
+
+协议仍为 1。`hello.boardId` 是编译硬件配置标识。`status.net.ssid` 只在联网时提供实际连接网络名，区别于 `cfg.wifiSsid` 的保存配置。
+
+`status.runtime`：`boardId`、`chipModel`、`uptimeSeconds`；内部堆 `heapTotalBytes`、`heapFreeBytes`、`heapMinFreeBytes`、`heapPeakUsedBytes`（总量减分配器最低可用）、`heapLargestBlockBytes`；外部 PSRAM `psramTotalBytes`、`psramFreeBytes`、`psramMinFreeBytes`；`netTaskStackFreeMinBytes`（ESP-IDF FreeRTOS 字节单位）、`netTaskCore`。内存统计自本次开机，分配器多区域低水位的汇总是诊断高水位指标，不是应用精确分配追踪；内部堆不含 PSRAM。
+
+旧固件缺字段时客户端显示未知，不填零或推测峰值。`logs` 的 n 限制为 1–60，最近在后；敏感行整体省略。APK 再次脱敏并限量，只在当前连接内保留。
+
+2026-10-27：状态中的 runtime 序列化必须先输出到独立临时字符串，不能向已拼接前缀的 String 调用 serializeJson；ArduinoJson 7 会清空目的字符串。完整回执须保留 data.fw/chip/runtime/net/cfg 等层级，且严格解析不能接受尾随括号。
+
+以下保留原有协议与历史设计。
+
 # v0.6.0 当前 BLE 实现说明
 
 本节优先于后面的历史设计。设备使用 Nordic UART UUID，协议版本 1，UTF-8 JSON 以一个换行分隔；不接受历史设想中的纯文本验证码或 `trust.import`。

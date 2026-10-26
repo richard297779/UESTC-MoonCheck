@@ -2,11 +2,13 @@
 
 > 如果已经有支持当前平台要求的固件文件，不需要安装 PlatformIO 或编译；用 Chrome / Edge 的网页烧录工具即可，全程约 3 分钟。
 >
-> **当前版本：v0.6.0。** 从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.6.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK；APK 安装到手机，不能当成固件刷入开发板。
+> **当前发行版本：v0.7.0（修正版已获用户实测确认；新增四板型未经实测）。** 从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.7.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK；APK 安装到手机，不能当成固件刷入开发板。
 
 ---
 
 ## 1. 先确认板子型号
+
+v0.7.0 新增 WROVER、S3-N8/N8R8、C3-DevKitM-1 实验构建，均未经实际验证；完整环境、内存与反馈说明见[板型支持矩阵](board-support.md)。芯片同为 S3 也不能把 N16R8 镜像用于 N8。新目标按包内 FLASH.txt 烧录，不套用其他板型偏移。
 
 看芯片上的丝印或开发板标签：
 
@@ -117,10 +119,10 @@ WiFi、账号表、坐标、通知地址全部保留，不需要重新配置。
 python -m pip install esptool
 
 # S3：整片刷
-python -m esptool --chip esp32s3 -p COM5 -b 921600 write_flash 0x0 wanan-0.3.1-s3-n16r8-merged.bin
+python -m esptool --chip esp32s3 -p COM5 -b 921600 write_flash 0x0 wanan-0.7.0-s3-n16r8-merged.bin
 
 # WROOM-32：整片刷
-python -m esptool --chip esp32 -p COM5 -b 921600 write_flash 0x0 wanan-0.3.1-wroom32-4mb-merged.bin
+python -m esptool --chip esp32 -p COM5 -b 921600 write_flash 0x0 wanan-0.7.0-wroom32-4mb-merged.bin
 
 # 只升级固件
 python -m esptool --chip esp32s3 -p COM5 -b 921600 write_flash 0x10000 firmware.bin

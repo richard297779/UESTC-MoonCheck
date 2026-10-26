@@ -1,0 +1,53 @@
+{
+  "id": 2,
+  "evt": "ok",
+  "data": {
+    "fw": "0.7.0",
+    "proto": 1,
+    "chip": {
+      "flashMB": 16,
+      "psramKB": 8192,
+      "freeHeapKB": 146
+    },
+    "runtime": {
+      "boardId": "s3-n16r8",
+      "chipModel": "ESP32-S3",
+      "uptimeSeconds": 90000,
+      "heapTotalBytes": 300000,
+      "heapFreeBytes": 150000,
+      "heapMinFreeBytes": 80000,
+      "heapPeakUsedBytes": 220000,
+      "heapLargestBlockBytes": 100000,
+      "psramTotalBytes": 8388608,
+      "psramFreeBytes": 8000000,
+      "psramMinFreeBytes": 7000000,
+      "netTaskStackFreeMinBytes": 6144,
+      "netTaskCore": 1
+    },
+    "net": {
+      "state": "connected",
+      "ssid": "宿舍 \\\" WiFi",
+      "ip": "192.0.2.10",
+      "rssi": -48,
+      "timeSynced": true,
+      "deviceTime": "2026-10-27 22:01:02"
+    },
+    "cfg": {
+      "schedule": {
+        "autoDaily": false
+      },
+      "wifiSsid": "fixture"
+    },
+    "cookies": [],
+    "auth": {
+      "state": "trusted"
+    },
+    "schedule": {
+      "nextRun": "2026-10-27 22:00:00"
+    },
+    "last": {
+      "date": "2026-10-26",
+      "ok": true
+    }
+  }
+}

@@ -15,6 +15,11 @@ class DeviceRepositoryTest {
         override var onBytes: (ByteArray) -> Unit = {}
         override var onDisconnect: () -> Unit = {}
         val sent = mutableListOf<String>()
+        var productionStatus = false
+        var holdLogs = false
+        var heldReply: ByteArray? = null
+        var logsReply = ""
+        var runtimeReply = JsonObject(emptyMap())
         var respond = true
         var wrongId = false
         var failWrite = false
@@ -31,18 +36,64 @@ class DeviceRepositoryTest {
             if (op == "status" && omitStatusReplyAfterSave && "auth.set" in sent) return
             if (failWrite) error("发送中断，请重连")
             if (!respond) return
-            val data: JsonElement = when (op) {
+            val data: JsonElement = if (op == "status" && productionStatus)
+                ProtocolCodec.json.parseToJsonElement(javaClass.getResource("/firmware-status.json")!!.readText()).jsonObject.obj("data")
+                else when (op) {
                 "hello" -> buildJsonObject { put("proto", 1); put("fw", "0.5.1"); put("btMac", "00:00:00:00:00:01"); if (longCommands) put("maxCommandBytes", 4095) }
-                "status" -> buildJsonObject { put("net", buildJsonObject { put("state", "connected"); put("timeSynced", true) }) }
+                "status" -> buildJsonObject { put("net", buildJsonObject { put("state", "connected"); put("ssid", "Actual Network"); put("timeSynced", true) }); put("runtime", runtimeReply) }
+                "logs" -> buildJsonObject { put("text", logsReply); put("dropped", 3) }
                 "account.list" -> buildJsonArray { add(buildJsonObject { put("label", "A01"); put("user", "masked"); put("enabled", true) }) }
                 "wx.status" -> buildJsonObject { put("slots", buildJsonArray { add(buildJsonObject { put("slot", 0); put("present", true) }) }) }
                 else -> JsonObject(emptyMap())
             }
             val response = buildJsonObject { put("id", request["id"]!!.jsonPrimitive.int + if (wrongId) 10 else 0); put("evt", "ok"); put("data", data) }
-            onBytes((response.toString() + "\n").toByteArray())
+            val encoded = (response.toString() + "\n").toByteArray()
+            if (op == "logs" && holdLogs) heldReply = encoded
+            else if (op == "status" && productionStatus) {
+                val pieces = encoded.dropLast(1).chunked(96)
+                pieces.forEachIndexed { index, piece ->
+                    val frame = buildJsonObject { put("seq", index); put("of", pieces.size); put("b64", java.util.Base64.getEncoder().encodeToString(piece.toByteArray())) }
+                    onBytes((frame.toString() + "\n").toByteArray())
+                }
+            } else onBytes(encoded)
         }
     }
     private val board = NearbyDevice("WANAN-TEST", "00:00:00:00:00:01", -40)
+    @Test fun handshakeCompletesWithProductionFirmwareStatus() = runTest {
+        val fake = Fake(); fake.productionStatus = true
+        val repository = DeviceRepository(fake, backgroundScope)
+        repository.connect(board); runCurrent()
+        assertTrue(repository.state.value.ready)
+        assertEquals("s3-n16r8", repository.state.value.runtime.board)
+        assertEquals(220000L, repository.state.value.runtime.peak)
+        assertTrue(repository.state.value.wifi.contains("宿舍"))
+        assertEquals(listOf("hello", "status", "account.list", "wx.status", "notify.status"), fake.sent)
+    }
+    @Test fun closingLogsWhileRequestIsPendingDiscardsLateText() = runTest {
+        val fake = Fake(); val repository = DeviceRepository(fake, backgroundScope)
+        repository.connect(board); runCurrent()
+        fake.holdLogs = true; fake.logsReply = "network ready"
+        repository.execute("日志", "logs"); runCurrent()
+        assertTrue(repository.state.value.busy)
+        repository.clearLogs()
+        fake.onBytes(fake.heldReply!!); runCurrent()
+        assertTrue(repository.state.value.deviceLogs.isEmpty())
+        assertFalse(repository.state.value.busy)
+    }
+    @Test fun statusAndLogsClearOnDisconnectAndAreSanitized() = runTest {
+        val fake = Fake(); fake.logsReply = "wifi connected\npassword=private"
+        fake.runtimeReply = buildJsonObject { put("heapPeakUsedBytes", 1234) }
+        val repository = DeviceRepository(fake, backgroundScope)
+        repository.connect(board); runCurrent()
+        assertEquals("Actual Network", repository.state.value.wifi)
+        assertEquals(1234L, repository.state.value.runtime.peak)
+        repository.execute("日志", "logs"); runCurrent()
+        assertEquals(listOf("wifi connected", "[敏感日志已隐藏]"), repository.state.value.deviceLogs)
+        assertEquals(3L, repository.state.value.logDropped)
+        repository.disconnect(); runCurrent()
+        assertTrue(repository.state.value.deviceLogs.isEmpty()); assertNull(repository.state.value.runtime.peak)
+        assertEquals(0L, repository.state.value.statusReadAt)
+    }
     @Test fun handshakeLoadsStatusAndExplicitAccountOrder() = runTest {
         val fake = Fake(); val repository = DeviceRepository(fake, backgroundScope)
         repository.connect(board); runCurrent()

@@ -1,6 +1,6 @@
 # MoonCheck Android 控制端
 
-v0.6.0 原生 Kotlin + Jetpack Compose 安卓控制端，通过 BLE 连接 ESP32。包含控制台、配置向导、账号管理、诊断、通知管理与可离线搜索的帮助。
+v0.7.0 原生 Kotlin + Jetpack Compose 安卓控制端，通过 BLE 连接 ESP32。包含控制台、配置向导、账号管理、诊断、通知管理与可离线搜索的帮助。
 
 ## 使用
 
@@ -12,7 +12,15 @@ v0.6.0 原生 Kotlin + Jetpack Compose 安卓控制端，通过 BLE 连接 ESP32
 
 **兼容性注意：** 目标为 Android 8+、固件协议 1。旧固件虽然 BLE 缓冲为 4096 字节，但队列会把 JSON 截到 511 字节。v0.6.0 已在固件源码修复，并由 `hello.maxCommandBytes` 声明 4095 字节 JSON 上限。APK 对没有该能力字段的旧固件按 511 字节限制，在表单中拒绝过长配置。较长微信凭据请先编译并刷入修复后的固件。
 
-从 [v0.6.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.6.0) 下载 `MoonCheck-0.6.0-android-debug.apk`，或下载整套发行 ZIP。2026-10-26 用户确认 APK 实际联调通过、功能全部正常，v0.6.0 已转为正式 Latest 发行。APK 保持已验证的 Debug 签名构建；具体机型、Android 版本和板型未提供，不据此声称覆盖全部兼容矩阵。
+从 [v0.7.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.7.0) 下载 `MoonCheck-0.7.0-android-debug.apk` 或整套 ZIP。2026-10-27 用户确认状态回执修复后的版本实测可行并授权发行；APK 保持 Debug 签名。未提供逐板型、手机和系统明细，不推断覆盖完整兼容矩阵。
+
+## v0.7.0 运行状态与开发者选项
+
+控制台 → **运行状态** → 刷新，可查看设备实际连接的网络名、IP、信号、板型、运行时长、内部堆当前/最低可用、分配器使用峰值、最大连续块、PSRAM 与任务栈最低余量。指标单位为 KiB，统计自本次开机，重启重置；内部堆与 PSRAM 分开显示。
+
+开启“开发者选项 / 查看设备日志”，手动读取最近 30 行。敏感行整体隐藏，日志不持久化、不导出；关闭选项、退出该页或断开连接会清空手机显示，不删除设备环形日志。日志仍可能含环境信息，请勿未经审查公开。
+
+旧协议 1 固件仍能连接，缺失的新指标显示“固件未提供”。只有 S3-N16R8 与 WROOM-32 可由维护者实测，本版修复联调已获用户确认（具体板型未说明）；新增型号均未经实机验证，欢迎按[反馈要求](../docs/board-support.md)提交信息。本次 v0.7.0 确认独立于历史 v0.6.0，未扩大到全部板型。
 
 ## 构建
 
@@ -27,7 +35,7 @@ Windows：
 ./build-local.ps1
 ```
 
-也可直接执行（Gradle 从仓库根目录 `VERSION` 读取 versionName；versionCode 当前为 600）：
+也可直接执行（Gradle 从仓库根目录 `VERSION` 读取 versionName；versionCode 当前为 700）：
 
 ```text
 gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest

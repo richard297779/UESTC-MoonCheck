@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
 import io.mooncheck.app.ble.LinkState
 import io.mooncheck.app.ble.NearbyDevice
+import io.mooncheck.app.data.RuntimeStatus
 import io.mooncheck.app.data.DeviceSnapshot
 import io.mooncheck.app.BuildConfig
 import java.io.File
@@ -29,6 +30,11 @@ class ScreenRenderTest {
         val vm = ControlViewModel(ApplicationProvider.getApplicationContext<Application>())
         compose.setContent { MoonTheme { MoonApp(vm,
             DeviceSnapshot(ready = ready, firmware = BuildConfig.VERSION_NAME, wifi = "Dorm WiFi", wifiConnected = true,
+                runtime = if (ready) RuntimeStatus(board = "s3-n16r8", chip = "ESP32-S3", uptime = 92040,
+                    total = 327680, free = 184320, minimum = 98304, peak = 229376, largest = 131072,
+                    psramTotal = 8388608, psramFree = 8159232, psramMinimum = 7864320,
+                    stackMinimum = 6144, ip = "192.0.2.10", rssi = -48) else RuntimeStatus(),
+                statusReadAt = if (ready) 1793061000000L else 0,
                 synced = true, auto = true, time = "2026-10-26 21:30:00", lastDate = "2026-10-25", lastOk = true),
             LinkState(connected = ready, phase = if (ready) "已连接 · 控制就绪" else "未连接", mtu = 512,
                 device = NearbyDevice("WANAN-DEMO", "00:00:00:00:00:00", -45)), {}) } }
@@ -66,6 +72,17 @@ class ScreenRenderTest {
         compose.onNode(hasSetTextAction()).performTextInput("微信授权与到期时间")
         compose.onNode(hasText("微信授权与到期时间") and hasSetTextAction().not()).performClick()
         compose.onNodeWithText("每个账号需要本人", substring = true).assertIsDisplayed()
+    }
+    @Test fun runtimeStatusAndDeveloperOptionsAreAccessible() {
+        launch(true)
+        compose.onNodeWithText("运行状态", useUnmergedTree = true).performScrollTo().performClick()
+        compose.onNodeWithText("刷新运行状态").assertIsDisplayed()
+        compose.onNodeWithText("使用峰值 · 本次开机").performScrollTo().assertIsDisplayed()
+        capture("06-runtime-status")
+        compose.onNodeWithText("查看设备日志").performScrollTo().assertIsDisplayed()
+        compose.onAllNodes(isToggleable()).onLast().performClick()
+        compose.onNodeWithText("读取最近 30 行").performScrollTo().assertIsDisplayed()
+        capture("07-developer-logs")
     }
     @Test fun checkinNeedsConfirmation() {
         launch(true); compose.onNodeWithText("手动提交打卡").performScrollTo().performClick()

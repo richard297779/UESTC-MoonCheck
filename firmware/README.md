@@ -1,6 +1,6 @@
 # 自行编译固件
 
-> 当前版本 v0.6.0。可直接下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.6.0)，或按本文自行构建。发行包同时附带 Android BLE 控制端测试 APK。
+> 发行版本 v0.7.0，修正版已获用户实测可行确认，具体测试板型未说明，新增四型号未经实机验证；详见[板型支持矩阵](../docs/board-support.md)。当前 Latest 为 v0.7.0。可直接下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.7.0)，或按本文自行构建。发行包同时附带 Android BLE 控制端测试 APK。
 
 ---
 
@@ -33,6 +33,10 @@ pio pkg install -g -p "platformio/toolchain-xtensa-esp32"
 | --- | --- | --- | --- |
 | `esp32-s3-devkitc-1` | ESP32-S3-N16R8 | 16 MB | WS2812 @ GPIO48 |
 | `esp32-wroom-32` | ESP32-WROOM-32 | 4 MB | 普通 LED @ GPIO2 |
+| `esp32-wrover-4mb` | WROVER，8 MB QSPI PSRAM | 4 MB | 默认关闭，实验目标 |
+| `esp32-s3-n8` | S3，无 PSRAM | 8 MB | GPIO48 RGB，实验目标 |
+| `esp32-s3-n8r8` | S3，8 MB OPI PSRAM | 8 MB | GPIO48 RGB，实验目标 |
+| `esp32-c3-devkitm-1` | 官方 C3-DevKitM-1 | 4 MB | GPIO8 RGB，实验目标 |
 
 > 多块 WROOM 板可共用此环境；上传时用 `--upload-port COMx` 指定实际串口。`platformio.debug.ini` 另提供绑定 COM6/COM7 的调试环境。
 
@@ -71,7 +75,7 @@ wx test 0
 
 ```text
 I main: === WANAN checkin device booting ===
-I main: firmware 0.6.0, built ...
+I main: firmware 0.7.0, built ...
 I logger: logger ready (ring=ok)
 I app_config: config loaded: ready=0 user=unset bfp=0
 I status_led: led ready: pin=48 rgb=1
@@ -127,3 +131,13 @@ I main: setup done, free heap=... B, psram=...
 - `auth.set` 只写不读；`status` 里学号打码，密码和指纹只显示「是否已设置」；`wx.status` 不回显微信令牌。
 - 日志中的 Cookie / 密码 / 验证码会被自动脱敏，不会明文输出。
 - 设备在 NVS 中**明文**保存学号、密码和微信授权凭据，别把板子转借他人；设备丢失后立即撤销/更新相关凭据。
+
+## v0.7.0 连接回执修正版
+
+2026-10-27 修复 APK 连接时“设备回执不完整”的固件缺陷：ArduinoJson 序列化清空已有 String，导致状态外层丢失和多余括号。现先单独序列化 runtime 再拼接，补充生产组包函数回归。版本为 0.7.0，修复联调已获用户确认，构建时间和 SHA-256 已更新；现有 APK 无需重装。
+
+已有同板型、同分区固件请解压新 full.zip，只刷 firmware.bin 到 `0x10000`，保留配置。首次安装或需要清配置才刷 merged.bin 到 `0x0`。
+
+## v0.7.0 运行状态
+
+`status` 新增 `runtime`（内部堆当前/最低可用、分配器使用峰值、最大连续块、PSRAM、网络任务栈最低余量、开机秒数、boardId）及 `net.ssid`（实际连接网络）。统计重启后重新开始，内部堆不含 PSRAM。`logs` 限制 1–60 行，固件与 APK 均隐藏敏感日志；Android 运行状态页可查看。新环境构建结束生成 `board-build.json` 供打包交叉核对。

@@ -13,16 +13,6 @@ namespace {
 /// @brief 单行日志最大长度（含结尾 '\0'）。
 constexpr size_t kFormatBufferSize = 512;
 
-/// @brief 需要脱敏的键名（仅在 "key=value" / "key: value" 形式下生效）。
-const char* const kSecretKeys[] = {"password", "passwd",      "pwd",      "cookie",
-                                   "authorization", "castgc", "session",  "captcha",
-                                   "verifycode",    "smscode", "mfacode"};
-
-/// @brief 判断字符是否属于"值"的字符集。
-bool isValueChar(char c) {
-  return c != ' ' && c != '&' && c != ';' && c != '"' && c != '\r' && c != '\n' && c != '\0';
-}
-
 }  // namespace
 
 Logger& Logger::instance() {
@@ -63,40 +53,26 @@ void Logger::setSink(Sink sink) {
 void Logger::clearSink() { setSink(nullptr); }
 
 String Logger::redact(const String& text) {
-  String out = text;  // 保留原始大小写
+  // Fail closed for credential-bearing diagnostics, including quoted JSON,
+  // URLs and opaque key material. Ordinary stage/error messages remain useful.
   String lowered = text;
   lowered.toLowerCase();
-  const int length = static_cast<int>(out.length());
-
-  for (const char* key : kSecretKeys) {
-    const int keyLength = static_cast<int>(strlen(key));
-    int from = 0;
-    while (from < length) {
-      const int at = lowered.indexOf(key, from);
-      if (at < 0) break;
-      int cursor = at + keyLength;
-      while (cursor < length && out[cursor] == ' ') cursor++;
-      // 只识别 "key=value" / "key: value"；否则视为普通文本（如 "cookie set: xxx"）
-      if (cursor < length && (out[cursor] == '=' || out[cursor] == ':')) {
-        cursor++;
-        while (cursor < length && (out[cursor] == ' ' || out[cursor] == '"')) cursor++;
-        int valueEnd = cursor;
-        while (valueEnd < length && isValueChar(out[valueEnd])) valueEnd++;
-        if (valueEnd > cursor) {
-          String masked;
-          masked.reserve(valueEnd - cursor);
-          for (int i = cursor; i < valueEnd; i++) masked += '*';
-          out = out.substring(0, cursor) + masked + out.substring(valueEnd);
-          lowered = out;
-          lowered.toLowerCase();
-          from = valueEnd;
-          continue;
-        }
-      }
-      from = at + keyLength;
-    }
+  const char* sensitive[] = {"pass", "pwd", "castgc", "encrypt", "private", "key=", "key:", "cookie", "session", "authorization", "token", "ticket",
+      "captcha", "verifycode", "smscode", "mfacode", "fingerprint", "bfp", "secret",
+      "access", "refresh", "openid", "unionid", "sendkey", "http://", "https://", "user", "student"};
+  for (const char* key : sensitive) {
+    if (lowered.indexOf(key) >= 0) return "[sensitive diagnostic omitted]";
   }
-  return out;
+  // Long numbers / hex / base64-like values may be credentials without a key.
+  unsigned opaque = 0;
+  unsigned digits = 0;
+  for (size_t i = 0; i < text.length(); ++i) {
+    const char c = text[i];
+    opaque = (isalnum(static_cast<unsigned char>(c)) || c == '+' || c == '/' || c == '=') ? opaque + 1 : 0;
+    digits = isdigit(static_cast<unsigned char>(c)) ? digits + 1 : 0;
+    if (opaque >= 24 || digits >= 8) return "[opaque diagnostic omitted]";
+  }
+  return text;
 }
 
 void Logger::log(LogLevel level, const char* tag, const char* format, ...) {
@@ -157,6 +133,7 @@ void Logger::pushToRing(const String& line) {
 String Logger::tail(uint16_t maxLines) const {
   String out;
   if (m_ring == nullptr) return out;
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   uint16_t lines = m_count;
   if (maxLines > 0 && maxLines < lines) lines = maxLines;
   for (uint16_t i = 0; i < lines; i++) {
@@ -165,5 +142,6 @@ String Logger::tail(uint16_t maxLines) const {
     out += &m_ring[static_cast<size_t>(index) * AppConst::kLogLineMax];
     if (i + 1 < lines) out += '\n';
   }
+  if (m_mutex) xSemaphoreGive(m_mutex);
   return out;
 }

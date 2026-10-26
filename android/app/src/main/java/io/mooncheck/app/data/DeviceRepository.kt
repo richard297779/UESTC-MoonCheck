@@ -13,6 +13,8 @@ data class Account(val label: String, val user: String, val enabled: Boolean, va
 data class NotifyChannel(val label: String, val enabled: Boolean, val accounts: String)
 data class DeviceSnapshot(
     val ready: Boolean = false, val firmware: String = "—", val mac: String = "—", val maxCommandBytes: Int = 511,
+    val runtime: RuntimeStatus = RuntimeStatus(), val deviceLogs: List<String> = emptyList(),
+    val logDropped: Long = 0, val statusReadAt: Long = 0,
     val wifi: String = "未读取", val wifiConnected: Boolean = false, val synced: Boolean = false,
     val time: String = "—", val auto: Boolean = false, val at: String = "22:00",
     val end: String = "23:30", val lastDate: String = "—", val lastOk: Boolean? = null,
@@ -28,6 +30,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
     private val mutable = MutableStateFlow(DeviceSnapshot())
     val state = mutable.asStateFlow()
     private val lock = Mutex()
+    private var logsGeneration = 0
     private var nextId = 1
     private var pending: Pair<Int, CompletableDeferred<JsonObject>>? = null
     private val assembler = FrameAssembler()
@@ -42,7 +45,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
         transport.onDisconnect = {
             generation++; assembler.reset()
             pending?.second?.completeExceptionally(IllegalStateException("连接已断开，操作结果未知")); pending = null
-            mutable.update { it.copy(ready = false, configured = emptySet(), slots = emptySet(), accounts = emptyList(), wifiConnected = false) }
+            mutable.update { it.copy(ready = false, configured = emptySet(), slots = emptySet(), accounts = emptyList(), wifiConnected = false, runtime = RuntimeStatus(), deviceLogs = emptyList(), logDropped = 0, statusReadAt = 0, wifi = "未连接") }
         }
         expiry = scope.launch {
             while (isActive) {
@@ -142,10 +145,16 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
             mutable.update { it.copy(busy = true, action = title, error = false, message = "$title · 等待设备回执") }
             var acknowledged = false
             try {
+                val logSession = logsGeneration
                 val response = request(op, fields, timeout)
                 acknowledged = true
                 when (op) {
                     "status" -> applyStatus(response.obj("data"))
+                    "logs" -> {
+                        val data = response.obj("data")
+                        if (logSession == logsGeneration) mutable.update { it.copy(deviceLogs = LogPrivacy.sanitize(data.text("text", "")),
+                            logDropped = (data["dropped"] as? JsonPrimitive)?.longOrNull?.coerceAtLeast(0) ?: 0) }
+                    }
                     "account.list", "wx.status" -> accountsInternal()
                     "wifi.scan" -> {
                         val data = response["data"]
@@ -165,7 +174,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
                         else "网络检查返回 HTTP ${status ?: "未知"}，可能需要校园网认证，请查看帮助。"
                     }
                     "test.time" -> "设备时间检查已完成，请刷新状态核对校时与时间。"
-                    "logs" -> "日志已读取。为保护凭据，原始文本不展示；请使用状态与诊断检查。"
+                    "logs" -> "已读取最近设备日志，敏感行已隐藏；日志仅保留在当前连接内。"
                     "wx.test" -> "微信取票测试通过，未提交打卡。"
                     "wifi.scan" -> "WiFi 扫描完成，可在配置页选择网络。"
                     else -> "$title · 设备已确认完成"
@@ -186,6 +195,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
             } finally { mutable.update { it.copy(busy = false, action = "") }; lock.unlock() }
         }
     }
+    fun clearLogs() { logsGeneration++; mutable.update { it.copy(deviceLogs = emptyList(), logDropped = 0) } }
     private suspend fun refreshInternal() { applyStatus(request("status").obj("data")); accountsInternal(); notificationsInternal() }
     private suspend fun notificationsInternal() {
         val data = request("notify.status").obj("data")
@@ -209,7 +219,8 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
     private fun applyStatus(data: JsonObject) {
         val net = data.obj("net"); val cfg = data.obj("cfg"); val schedule = cfg.obj("schedule"); val last = data.obj("last")
         mutable.update { it.copy(
-            wifi = cfg.text("wifiSsid"), wifiConnected = net.text("state") == "connected",
+            runtime = RuntimeStatus.parse(data.obj("runtime"), net, data.obj("chip")), statusReadAt = System.currentTimeMillis(),
+            wifi = if (net.text("state") == "connected") net.text("ssid", "固件未提供") else "未连接", wifiConnected = net.text("state") == "connected",
             synced = net.flag("timeSynced"), time = net.text("deviceTime"),
             auto = schedule.flag("autoDaily"), at = schedule.text("checkinAt", "22:00"), end = schedule.text("windowEnd", "23:30"),
             lastDate = last.text("date"), lastOk = if (last.text("date", "").isBlank()) null else last.flag("ok")

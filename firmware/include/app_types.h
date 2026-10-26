@@ -6,6 +6,7 @@
 // ============================================================================
 
 #include <Arduino.h>
+#include "board_profile.h"
 
 // ---------------------------------------------------------------- 返回码
 
@@ -138,21 +139,6 @@ namespace AppConst {
 /// @note 可用编译标志覆盖，无需改代码：
 ///         -DWANAN_LED_PIN=-1   关闭 LED
 ///         -DWANAN_LED_PIN=2 -DWANAN_LED_IS_RGB=0   指定普通 LED
-#if !defined(WANAN_LED_PIN)
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
-#define WANAN_LED_PIN 48  ///< S3/C3 DevKit 常见板载 WS2812
-#else
-#define WANAN_LED_PIN 2   ///< 经典 ESP32 板载普通 LED
-#endif
-#endif
-#if !defined(WANAN_LED_IS_RGB)
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
-#define WANAN_LED_IS_RGB 1
-#else
-#define WANAN_LED_IS_RGB 0
-#endif
-#endif
-
 inline constexpr int8_t kLedPin = static_cast<int8_t>(WANAN_LED_PIN);
 inline constexpr bool kLedIsRgb = (WANAN_LED_IS_RGB != 0);
 
@@ -202,6 +188,6 @@ inline constexpr uint32_t kCheckinRetrySeconds = 180;
 /// @brief net_task 参数。
 inline constexpr uint32_t kNetTaskStackBytes = 20480;  // 2026-10-24: MMTLS/ECDH/ArduinoJson 需要（10K 时 wx.test 崩溃重启）
 inline constexpr UBaseType_t kNetTaskPriority = 2;
-inline constexpr BaseType_t kNetTaskCore = 1;
+inline constexpr BaseType_t kNetTaskCore = BoardProfile::kNetCore;
 
 }  // namespace AppConst

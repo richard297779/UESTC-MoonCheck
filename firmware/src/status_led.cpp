@@ -46,7 +46,7 @@ Result StatusLed::begin(int8_t pin, bool isRgb) {
   m_isRgb = isRgb;
   if (!m_isRgb) {
     pinMode(static_cast<uint8_t>(pin), OUTPUT);
-    digitalWrite(static_cast<uint8_t>(pin), LOW);
+    digitalWrite(static_cast<uint8_t>(pin), BoardProfile::kLedActiveLow ? HIGH : LOW);
   } else {
     writeColor(0, 0, 0);  // 复位灯带
   }
@@ -79,7 +79,7 @@ void StatusLed::writeColor(uint8_t red, uint8_t green, uint8_t blue) {
     neopixelWrite(static_cast<uint8_t>(m_pin), red, green, blue);
 #endif
   } else {
-    digitalWrite(static_cast<uint8_t>(m_pin), (red + green + blue) > 0 ? HIGH : LOW);
+    digitalWrite(static_cast<uint8_t>(m_pin), ((red + green + blue) > 0) != BoardProfile::kLedActiveLow ? HIGH : LOW);
   }
 }
 

@@ -10,12 +10,25 @@ import sys
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote
+from board_targets import catalog, partitions, validate_image, validate_partition_binary
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def check_sources():
     issues = []
+    release_root = ROOT / "release"
+    if release_root.exists():
+        for entry in release_root.iterdir():
+            if entry.name == "README.md" and entry.is_file():
+                continue
+            if entry.is_dir() and (entry.name == ".staging" or re.fullmatch(r"v\d+\.\d+\.\d+", entry.name)):
+                continue
+            issues.append(f"Unversioned release entry: {entry.name}; use release/vX.Y.Z/ or .staging/")
+    try:
+        catalog()
+    except (AssertionError, ValueError, KeyError, OSError) as error:
+        issues.append(f"Board catalog: {error}")
     version = (ROOT / "VERSION").read_text().strip()
     header = (ROOT / "firmware/include/app_version.h").read_text(encoding="utf-8")
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
@@ -63,6 +76,7 @@ def digest(data):
 def check_package(directory, require_clean=False):
     directory = Path(directory).resolve()
     manifest = json.loads((directory / "release-manifest.json").read_text(encoding="utf-8-sig"))
+    assert manifest.get("schemaVersion", 1) in {1, 2}, "Unknown manifest schema"
     version = (ROOT / "VERSION").read_text().strip()
     assert manifest["version"] == version, "Package version differs from source"
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -96,8 +110,47 @@ def check_package(directory, require_clean=False):
             app = archive.read("firmware.bin")
             assert version.encode() in app, "Firmware version missing"
             merged = (directory / f"{name}-merged.bin").read_bytes()
-            assert merged[0x10000:] == app, "Merged app differs from full ZIP"
-            assert merged[0x9000:0xE000] == b"\xff" * 0x5000, "Merged NVS gap is unexpected"
+            if manifest.get("schemaVersion", 1) == 1:
+                assert merged[0x10000:] == app, "Merged app differs from full ZIP"
+                assert merged[0x9000:0xE000] == b"\xff" * 0x5000, "Merged NVS gap is unexpected"
+            else:
+                profiles = manifest["boardProfiles"]
+                assert len(profiles) == len(manifest["boards"]) and {p["id"] for p in profiles} == set(manifest["boards"]), "Invalid board profiles"
+                profile = next(p for p in profiles if p["id"] == board)
+                target = next((b for b in catalog() if b["id"] == board), None)
+                assert target is not None, "Unknown release board"
+                for field in ("env", "chip", "flashSize", "psram", "flashMode", "flashFreq", "status"):
+                    assert profile[field] == target[field], f"Release profile differs from catalog: {field}"
+                assert profile["status"] in {"baseline", "experimental"}, "Invalid validation status"
+                assert "pending" in profile["physicalValidation"] or "Not physically validated" in profile["physicalValidation"], "Unverified physical validation claim"
+                validate_image(app, profile)
+                part_text = profile["partitions"]
+                # PowerShell may preserve CRLF; hash the exact UTF-8 partition source.
+                assert digest(part_text.encode()) == profile["partitionSha256"], "Partition source digest mismatch"
+                parts = partitions(part_text)
+                validate_partition_binary(archive.read("partitions.bin"), parts)
+                offsets = profile["offsets"]
+                assert set(offsets) == {"bootloader.bin", "partitions.bin", "boot_app0.bin", "firmware.bin"}, "Unexpected flash images"
+                for file, key in (("bootloader.bin", "bootOffset"), ("partitions.bin", "partitionOffset"), ("boot_app0.bin", "bootAppOffset"), ("firmware.bin", "appOffset")):
+                    assert int(offsets[file], 0) == int(target[key], 0), "Release flash offset differs from catalog"
+                app_offset = int(offsets["firmware.bin"], 0)
+                assert merged[app_offset:] == app, "Merged app differs from full ZIP"
+                limit = int(profile["flashSize"].removesuffix("MB")) * 1024 * 1024
+                assert len(merged) <= limit and all(p["offset"] + p["size"] <= limit for p in parts), "Image/partition exceeds flash"
+                for p in parts:
+                    if p["type"] == "app":
+                        assert len(app) <= p["size"], "App exceeds OTA slot"
+                    if p["subtype"] == "nvs":
+                        assert merged[p["offset"]:p["offset"] + p["size"]] == b"\xff" * p["size"], "Unexpected NVS data"
+                for file, offset in offsets.items():
+                    binary = archive.read(file)
+                    begin = int(offset, 0)
+                    actual = merged[begin:begin + len(binary)]
+                    if file == "bootloader.bin":
+                        validate_image(binary, profile)
+                        assert actual[:2] == binary[:2] and actual[4:] == binary[4:], "Merged bootloader differs"
+                    else:
+                        assert actual == binary, f"Merged {file} differs"
     bundle_name = f"MoonCheck-{version}-release.zip"
     manifest_name = "release-manifest.json"
     expected[manifest_name] = (directory / manifest_name).read_bytes()

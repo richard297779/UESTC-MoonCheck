@@ -203,8 +203,13 @@ void setup() {
   g_wifi.setStateCallback(onWifiStateChanged);
 
   // 8) 网络任务
-  xTaskCreatePinnedToCore(netTaskEntry, "net_task", AppConst::kNetTaskStackBytes, nullptr,
-                          AppConst::kNetTaskPriority, nullptr, AppConst::kNetTaskCore);
+  if (xTaskCreatePinnedToCore(netTaskEntry, "net_task", AppConst::kNetTaskStackBytes, nullptr,
+                          AppConst::kNetTaskPriority, nullptr, AppConst::kNetTaskCore) != pdPASS) {
+    LOG_E(kTag, "net_task creation failed; restarting before accepting commands");
+    delay(1000);
+    ESP.restart();
+    return;
+  }
 
   // 9) 已配网则自动连接并校时
   if (g_config.wifi().isConfigured()) {
