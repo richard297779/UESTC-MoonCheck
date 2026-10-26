@@ -200,7 +200,7 @@ void BleService::dispatchLines() {
     m_buffer.remove(0, newline + 1);
     line.trim();
     if (line.length() == 0) continue;
-    LOG_D(kTag, "rx: %s", line.c_str());
+    LOG_D(kTag, "rx command: %u bytes", static_cast<unsigned>(line.length()));
     if (m_lineCallback) m_lineCallback(line);
   }
 }

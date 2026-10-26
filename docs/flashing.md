@@ -2,7 +2,7 @@
 
 > 如果已经有支持当前平台要求的固件文件，不需要安装 PlatformIO 或编译；用 Chrome / Edge 的网页烧录工具即可，全程约 3 分钟。
 >
-> **当前版本注意：** GitHub Releases 中已发布的 v0.4.0 预编译固件不支持平台新增的微信操作票据要求。当前源码版本为 v0.5.1；在 v0.5.1 Release 发布前，请先按[自行编译](../firmware/README.md)构建固件。建议直接使用 PlatformIO 的 Upload；若使用网页工具，本页的地址和刷写方式适用于源码构建产物及发行包。
+> **当前版本：v0.6.0。** 从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.6.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK；APK 安装到手机，不能当成固件刷入开发板。
 
 ---
 

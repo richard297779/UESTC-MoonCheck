@@ -111,32 +111,59 @@ class Console:
         try:
             message = json.loads(text)
         except json.JSONDecodeError:
-            print(f"\n<= {text}")
+            print("\n<= 收到非 JSON 回执，已忽略")
+            return
+        if not isinstance(message, dict):
+            print("\n<= 回执必须为 JSON 对象，已忽略")
             return
 
         # 长数据分片重组：b64 = base64 分片（新），chunk = 转义分片（兼容旧固件）
         if "seq" in message and "of" in message and ("b64" in message or "chunk" in message):
-            total = int(message["of"])
-            seq = int(message["seq"])
-            if seq == 0:
-                self.pending_chunks.clear()  # 新的一组分片开始，丢弃上一组残留
-            if "b64" in message:
-                piece = base64.b64decode(message["b64"]).decode("utf-8", "replace")
-            else:
-                piece = message["chunk"]
-            buffer = self.pending_chunks.setdefault(total, {})
-            buffer[seq] = piece
-            if len(buffer) == total:
-                full = "".join(buffer[i] for i in range(total))
-                self.pending_chunks.pop(total, None)
-                self._print_json(full)
+            try:
+                total = int(message["of"])
+                seq = int(message["seq"])
+                if not 1 <= total <= 2048 or not 0 <= seq < total:
+                    raise ValueError("分片序号无效")
+                if seq == 0:
+                    self.pending_chunks.clear()
+                elif total not in self.pending_chunks:
+                    raise ValueError("缺少首个分片")
+                if "b64" in message:
+                    piece = base64.b64decode(message["b64"], validate=True)
+                else:
+                    piece = message["chunk"].encode("utf-8")
+                buffer = self.pending_chunks.setdefault(total, {})
+                if seq in buffer and buffer[seq] != piece:
+                    raise ValueError("重复分片冲突")
+                buffer[seq] = piece
+                if sum(map(len, buffer.values())) > 65536:
+                    raise ValueError("回执过长")
+                if len(buffer) == total:
+                    full = b"".join(buffer[i] for i in range(total)).decode("utf-8")
+                    self.pending_chunks.pop(total, None)
+                    self._print_json(full)
+            except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+                self.pending_chunks.clear()
+                print("\n<= 回执分片无效或不完整，请重新查询")
             return
         self._print_json(text)
 
     @staticmethod
+    def _redact(value):
+        secret_keys = {"pass", "password", "pwd", "bfp", "user", "openid", "access",
+                       "refresh", "accesstoken", "refreshtoken", "value", "url",
+                       "session", "cookie", "authorization"}
+        if isinstance(value, dict):
+            return {key: "<已隐藏>" if key.lower() in secret_keys else Console._redact(item)
+                    for key, item in value.items()}
+        if isinstance(value, list):
+            return [Console._redact(item) for item in value]
+        return value
+
+    @staticmethod
     def _print_json(text: str) -> None:
         try:
-            pretty = json.dumps(json.loads(text), ensure_ascii=False, indent=2)
+            pretty = json.dumps(Console._redact(json.loads(text)), ensure_ascii=False, indent=2)
         except json.JSONDecodeError:
             pretty = text
         print(f"\n<= {pretty}")
@@ -145,13 +172,14 @@ class Console:
         payload.setdefault("id", self.next_id)
         self.next_id += 1
         line = json.dumps(payload, ensure_ascii=False) + "\n"
-        displayed = dict(payload)
-        if displayed.get("op") == "wx.import":
-            for field in ("openid", "access", "refresh"):
-                if field in displayed:
-                    displayed[field] = "<已隐藏>"
+        encoded = line.encode("utf-8")
+        if len(encoded) > 4096:
+            raise ValueError("指令超过设备 4096 字节接收限制")
+        displayed = self._redact(payload)
         print(f"=> {json.dumps(displayed, ensure_ascii=False)}")
-        await self.client.write_gatt_char(NUS_RX, line.encode("utf-8"), response=False)
+        packet_size = min(max(getattr(self.client, "mtu_size", 23) - 3, 20), 480)
+        for start in range(0, len(encoded), packet_size):
+            await self.client.write_gatt_char(NUS_RX, encoded[start:start + packet_size], response=True)
         await asyncio.sleep(0.15)
 
     # ---------------------------------------------------------------- 命令
@@ -170,7 +198,7 @@ class Console:
             return True
         if command == "raw":
             try:
-                payload = json.loads(" ".join(args))
+                payload = json.loads(line.strip()[len(parts[0]):].strip())
                 if not isinstance(payload, dict):
                     print("  JSON 指令必须是对象")
                     return True

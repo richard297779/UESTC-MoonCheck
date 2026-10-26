@@ -1,6 +1,6 @@
 # 自行编译固件
 
-> Releases 中现有的 v0.4.0 预编译固件不支持平台新增的微信操作票据要求。要让设备按当前平台要求打卡，请从当前源码编译后再[刷入固件](../docs/flashing.md)；待发布包含此能力的新固件后，可直接下载对应板型的发布包。
+> 当前版本 v0.6.0。可直接下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.6.0)，或按本文自行构建。发行包同时附带 Android BLE 控制端测试 APK。
 
 ---
 
@@ -65,13 +65,13 @@ wx test 0
 
 账号表为空时设备主账号使用槽位 0；账号表非空时，微信凭据槽位按账号表顺序对应（从 0 开始）。凭据保存在 NVS，刷新后会自动保存；刷新被拒绝时需由账号本人重新扫码并导入。`chain` 只验证 CAS / 微应用链路，不能代替 `wx test 0`。
 
-> Releases 中的 v0.4.0 预编译固件早于此改动，不支持 `wx.*` 指令。当前源码的固件版本字符串仍为 `0.4.0`，请从当前源码编译，不要仅凭版本号判断功能。
+> v0.6.0 修复 BLE 命令在任务队列中被截到 511 字节的问题，并在 `hello` 中声明 `maxCommandBytes:4095`。旧版本缺少该能力字段时，Android 会在发送前阻止过长配置。协议版本仍为 1。
 
 ## 4. 首次上电的日志
 
 ```text
 I main: === WANAN checkin device booting ===
-I main: firmware 0.4.0, built ...
+I main: firmware 0.6.0, built ...
 I logger: logger ready (ring=ok)
 I app_config: config loaded: ready=0 user=unset bfp=0
 I status_led: led ready: pin=48 rgb=1

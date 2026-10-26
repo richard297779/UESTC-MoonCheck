@@ -1,3 +1,17 @@
+# v0.6.0 当前 BLE 实现说明
+
+本节优先于后面的历史设计。设备使用 Nordic UART UUID，协议版本 1，UTF-8 JSON 以一个换行分隔；不接受历史设想中的纯文本验证码或 `trust.import`。
+
+- RX 支持 Write / Write Without Response，按字节累计至换行后入队。
+- v0.6.0 修复 512 字节任务项截断完整 JSON 的问题；`hello.maxCommandBytes=4095`，加换行最多 4096 字节。旧版本无字段时按 511 字节限制。
+- TX 的短回执为完整 JSON 行；长回执使用 `{seq,of,b64}`，seq 从 0 开始。先 base64 解码并合并原始字节，最后一次 UTF-8 解码，不能逐片解码中文。
+- 当前通知路径要求实际 MTU 至少 60。客户端应协商 MTU、确认 CCCD 后再握手；Write 完成不是业务完成。
+- 终态为同 ID 的 `evt:ok/error`；progress/result/alert 事件可能不带 ID。超时或断线不得自动重放有副作用的命令。
+- Android 的实现、边界与测试见 [实施指南](../../android/docs/implementation-guide.md)；PC 控制台也使用 MTU 字节切片与带响应写入。
+- 当前下行分片无消息组 ID，整组互斥仍待后续改造；BLE 配对加密与应用鉴权未实现。
+
+---
+
 # 蓝牙协议与设备交互设计（BLE Protocol）
 
 > 对应 F1 / F2 / F6 与 D8（最小硬件）。目标：**手机不装任何自研 App 就能完成全部配置与运维**。

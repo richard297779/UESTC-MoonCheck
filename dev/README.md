@@ -18,6 +18,7 @@ mooncheck/
 ├─ docs/                用户文档（快速开始 / 刷固件 / 指令 / 通知 …）
 ├─ firmware/            固件源码（PlatformIO）
 ├─ desktop/             桌面单文件版源码 + 构建脚本（Windows/Linux）
+├─ android/             原生 Android BLE 控制端、测试与构建工程
 ├─ tools/               用户工具：ble_console.py、notify_sink.py …
 ├─ dev/                 ← 你在这里
 │  ├─ docs/             开发文档：协议、设计、验证记录
@@ -40,6 +41,8 @@ mooncheck/
 | [notify-design.md](docs/notify-design.md) | 通知通道格式、事件表、限流与失败隔离 |
 | [network-uestc-wifi.md](docs/network-uestc-wifi.md) | 校园网 Portal / 802.1X 的判定与现状 |
 | [desktop-app.md](docs/desktop-app.md) | 桌面单文件版：代码地图、schema、与固件语义的对应 |
+| [Android 实施指南](../android/docs/implementation-guide.md) | APK/小程序取舍、BLE 契约、目录规划与验收步骤 |
+| [项目体检记录](../docs/project-health.md) | v0.6.0 检查范围、自动化证据与发布限制 |
 | [release-guide.md](docs/release-guide.md) | 发布者手册：锁版本、merge_bin、GitHub Release 流程 |
 | [screenshots.md](docs/screenshots.md) | 用户文档的配图清单（维护用） |
 
@@ -79,8 +82,8 @@ mooncheck/
 | `companion_probe.py` | 用 Playwright 走真实浏览器登录，做对照实验 |
 | `portal_sequence.json` | 已脱敏的门户请求序列（`_t=<SN>`，无 Cookie） |
 
-**发布**：`dev/tools/make_release.bat`（双击）/ `make_release.ps1` —— 读版本号、校验 build 产物、
-`esptool merge_bin` 打包、生成 sha256、用 `gh` 上传 Release。
+**发布**：`dev/tools/make_release.bat`（双击）/ `make_release.ps1` —— 读统一 VERSION、核对固件/APK 版本和新鲜度、
+`esptool merge_bin` 打包、生成整套 ZIP/清单/SHA256；默认不上传，显式 `-Upload` 用 `gh` 上传并校验后发布。
 
 **用户工具**在 [`../tools/`](../tools/)：`ble_console.py`（蓝牙配网台）、`notify_sink.py`（局域网通知中转）、
 `board_id.py`、`clear_ble_cache.ps1`。

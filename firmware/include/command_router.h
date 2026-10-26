@@ -56,6 +56,7 @@ class CommandRouter {
     bool force = false;      ///< 打卡时=跳过"今日已打卡"检查；自测时=允许窗口外强制登录
     int32_t requestId = 0;   ///< BLE 请求 id（0 表示定时触发，无回执）
     char payload[512] = {0}; ///< 附加参数（如 test.http 的 URL、test.chain 的等待秒数）
+    char* command = nullptr; ///< 完整 BLE 命令：入队后由消费者释放，避免截断长授权
   };
 
   /// @brief 注入微信凭据仓（可选；不注入则 wx.* 命令返回未就绪）。

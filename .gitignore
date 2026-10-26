@@ -39,3 +39,17 @@ venv/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Android：本机构建缓存、SDK 路径、签名与安装包
+android/.gradle/
+android/.build-tools/
+android/.gradle-home/
+android/.kotlin/
+android/**/build/
+android/local.properties
+android/captures/
+android/keystore.properties
+*.jks
+*.keystore
+*.apk
+*.aab

@@ -4,6 +4,9 @@
 
 #include "command_router.h"
 
+#include <memory>
+#include <new>
+
 #include "wx_mmtls.h"
 #include "wx_oauth.h"
 
@@ -93,14 +96,24 @@ bool CommandRouter::enqueue(WorkKind kind, const String& payload, bool force, in
   item.kind = kind;
   item.force = force;
   item.requestId = requestId;
-  const size_t copyLength =
-      payload.length() < sizeof(item.payload) - 1 ? payload.length() : sizeof(item.payload) - 1;
-  memcpy(item.payload, payload.c_str(), copyLength);
-  item.payload[copyLength] = '\0';
+  std::unique_ptr<char[]> command;
+  if (kind == WorkKind::Command) {
+    if (payload.length() > 4095) return false;  // BLE 4096 字节缓冲需为换行留 1 字节
+    command.reset(new (std::nothrow) char[payload.length() + 1]);
+    if (!command) return false;
+    memcpy(command.get(), payload.c_str(), payload.length() + 1);
+    item.command = command.get();
+  } else {
+    const size_t copyLength =
+        payload.length() < sizeof(item.payload) - 1 ? payload.length() : sizeof(item.payload) - 1;
+    memcpy(item.payload, payload.c_str(), copyLength);
+    item.payload[copyLength] = '\0';
+  }
   if (xQueueSend(m_queue, &item, pdMS_TO_TICKS(200)) != pdTRUE) {
     LOG_W(kTag, "queue full, drop kind=%u", static_cast<unsigned>(kind));
     return false;
   }
+  command.release();  // 队列已复制指针；失败路径仍由 unique_ptr 自动释放
   return true;
 }
 
@@ -459,9 +472,9 @@ void CommandRouter::handleHello(int32_t id) {
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   esp_read_mac(btMac, ESP_MAC_BT);
 
-  char data[384];
+  char data[448];
   snprintf(data, sizeof(data),
-           "{\"fw\":\"%s\",\"proto\":%d,\"built\":\"%s\","
+           "{\"fw\":\"%s\",\"proto\":%d,\"maxCommandBytes\":4095,\"built\":\"%s\","
            "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"btMac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"bleName\":\"%s-%02X%02X\","
@@ -694,7 +707,12 @@ void CommandRouter::handleTestTime(int32_t id) {
 
 void CommandRouter::execute(const WorkItem& item) {
   switch (item.kind) {
-    case WorkKind::Command: dispatchCommand(String(item.payload)); break;
+    case WorkKind::Command: {
+      // 先转移所有权，确保 dispatchCommand 的所有返回分支都释放完整命令。
+      std::unique_ptr<char[]> command(item.command);
+      if (command) dispatchCommand(String(command.get()));
+      break;
+    }
     case WorkKind::WifiConnect: workWifiConnect(item); break;
     case WorkKind::WifiScan: workWifiScan(item); break;
     case WorkKind::TimeSync: workTimeSync(item); break;

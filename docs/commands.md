@@ -1,7 +1,7 @@
 # 指令手册
 
 设备只接受 **JSON 指令**（格式 `{"op":"...","id":N,...}`）。日常使用不需要记 JSON：
-仓库里的 `tools/ble_console.py` 会把下面的短命令自动转成 JSON。
+仓库里的 `tools/ble_console.py` 会把下面的短命令自动转成 JSON；[Android APK](../android/README.md) 提供对应按键与表单。
 
 ```powershell
 python tools/ble_console.py --name WANAN-XXXX
@@ -22,7 +22,7 @@ python tools/ble_console.py --name WANAN-XXXX
 | `loc <纬度> <经度> [地址…]` | 配置打卡坐标，地址只用于显示 |
 | `sched <打卡时间> [窗口结束] [抖动秒]` | 例：`sched 22:00 23:30 30` |
 | `auto [on\|off]` | 开关每日自动打卡（不带参数等于 `on`） |
-| `name [标签]` | 设置广播名后缀，`name A01` → `WANAN-A01`；重启生效 |
+| `name [标签]` | 设置广播名后缀，`name A01` → `WANAN-A01`；广播即时刷新，重新扫描可见 |
 
 示例：
 
@@ -40,7 +40,7 @@ auto on
 
 ### 微信操作票据（当前固件源码）
 
-平台现要求打卡请求携带 `X-Checkin-Ticket`。当前 v0.5.1 源码会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。GitHub Releases 中已发布的 v0.4.0 预编译固件不含此更新；在 v0.5.1 Release 发布前，请使用当前源码编译。
+平台现要求打卡请求携带 `X-Checkin-Ticket`。当前 v0.6.0 固件会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。v0.5.1 已支持票据，但长命令队列存在截断问题；v0.6.0 修复后，`hello.maxCommandBytes` 为 4095（另加一个换行，总计最多 4096 字节）。没有该字段的旧固件按 511 字节 JSON 上限处理。
 
 在 `ble_console.py` 中可直接使用以下快捷命令：
 

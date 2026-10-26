@@ -9,7 +9,7 @@ rem
 rem  Options pass straight through, e.g. from a terminal:
 rem     make_release.bat -NoUpload
 rem     make_release.bat -Only s3 -Prerelease
-rem     make_release.bat -AllowStale -Version 0.4.0
+rem     make_release.bat -Upload -Prerelease
 rem
 rem  Why copy through %TEMP% first: the .ps1 contains Chinese text. Windows
 rem  PowerShell 5.1 only decodes a .ps1 as UTF-8 when the file starts with a
