@@ -1,3 +1,13 @@
+# 桌面 1.1.0 架构更新
+
+2026-10-27：微信票据链已移植，桌面版本独立为 1.1.0。`wechat_wire.py` 负责字节编解码、PyCryptodome GCM/ECDH；`wechat_transport.py` 负责有界 socket/HTTPDNS/MMTLS/0-RTT；`wechat.py` 负责 OAuth 签名、轮换落盘、两 code 和独立 MP Cookie 取票。业务 `service._checkin_one` 在 submit 前取得账号自己的票据，`CheckinApi.submit` 拒绝缺失或非法票据。
+
+每账号配置新增 wechat 对象，schema 2 缺字段补齐并保留未知键；单人 self 映射顶层。票据不缓存到磁盘，4600x 失效不自动重放。CLI 增加 wx 命令，GUI 增加微信授权页；同配置网络操作通过 `operation_lock.py` 非阻塞互斥。GUI 工作线程不读取 Tk 变量，失败后也回读旋转后的凭据。导出采用递归敏感字段清理。
+
+默认依赖从零运行依赖变为 PyCryptodome，PyInstaller 收集 Crypto 子模块与动态库；Windows PE 与 CLI 版本均为 1.1.0。桌面不依赖 Android/ESP32，也不因本次变更移动已有 0.7.0 标签。实施范围及未完成的真实账号验收见[计划](desktop-port-plan.md)与[验证](../../desktop/docs/verification.md)。
+
+以下为 1.0.0 历史设计；其中“零依赖”、接口无需微信票据等不再描述当前行为。
+
 # 桌面版架构与构建（开发文档）
 
 面向想读懂或改造 `desktop/` 单文件版的人。协议细节不在此重复，见

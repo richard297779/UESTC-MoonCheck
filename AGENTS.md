@@ -9,7 +9,7 @@
 | `firmware/` | C++17、PlatformIO、Arduino-ESP32 2.0.17、FreeRTOS；ESP32 网络、调度、账号、BLE 与通知 |
 | `android/` | Kotlin 2.1.20、Jetpack Compose Material 3、协程、kotlinx.serialization；原生 BLE 控制端 |
 | `tools/` | Python 用户工具；`ble_console.py` 使用 bleak，`check_project.py` 执行仓库与发行包检查 |
-| `desktop/` | Python 3.10+、tkinter、标准库 HTTP、纯 Python AES；PyInstaller 打包的历史桌面程序 |
+| `desktop/` | Python 3.10+、tkinter、标准库 HTTP、CAS AES、PyCryptodome；独立版本 1.1.0 的微信取票桌面程序 |
 | `docs/` | 用户指南 |
 | `dev/docs/`、`dev/tools/` | 协议、开发设计、验证方案与开发辅助工具 |
 | `release/` | 按 `vX.Y.Z/` 保存发行产物，根目录 README 为索引；`.staging/` 单独保存打包暂存 |
@@ -17,12 +17,12 @@
 - 六目标目录见 `firmware/board-targets.json`；新增 WROVER-4MB、S3-N8/N8R8、C3-DevKitM-1 均未经实机验证，默认发行仍只选原有两个目标。固件原有环境为 `esp32-s3-devkitc-1`（S3-N16R8）与 `esp32-wroom-32`（4 MB、无 PSRAM）。账号数量由运行配置决定，不创建单人/多人构建变体。
 - 固件依赖固定在 `firmware/platformio.ini`：espressif32 7.1.3、NimBLE-Arduino 2.5.1、ArduinoJson 7.4.3。PlatformIO 框架包版本不等于 Arduino 运行库版本。
 - Android 使用 JDK 17、Gradle 8.11.1、AGP 8.9.2、Compose BOM 2025.04.01、SDK 35、minSdk 26。依赖集中在 `android/gradle/libs.versions.toml`。
-- 桌面版尚未实现平台要求的 `X-Checkin-Ticket` 授权流程。不要把旧桌面功能描述为当前可用，也不要默认重新发行桌面二进制。
+- 桌面 1.1.0 已移植微信授权/MMTLS/取票，需按 desktop/requirements.txt 安装依赖；未完成真实桌面账号验证，不沿用固件实测结论。桌面版本由 desktop/VERSION 独立维护，默认不混入固件发行。
 
 ## 开发环境
 
 - 用 `git status --short` 检查已有修改；保留用户修改。搜索优先使用 `rg`、`git ls-files`，避开 `.pio/`、`.gradle-home/`、`.build-tools/` 和 `build/` 缓存。
-- 安装 Python 3.10+ 与 PlatformIO CLI；运行 BLE 控制台需要 `python -m pip install bleak`。桌面运行时无需第三方 Python 依赖。
+- 安装 Python 3.10+ 与 PlatformIO CLI；运行 BLE 控制台需要 `python -m pip install bleak`。桌面微信链路运行依赖 PyCryptodome。
 - Android Studio 打开 `android/`；安装 SDK Platform 35、Build Tools 35.0.0，配置 `JAVA_HOME` 以及 `android/local.properties` 的 `sdk.dir` 或 `ANDROID_HOME`。
 - Windows 优先用 `android/build-local.ps1`；它管理项目内缓存及临时目录，并恢复调用前环境。`.build-tools/` 中的本机工具是可选缓存，不是已提交的依赖。
 - 不把某位开发者的绝对 SDK、Python、JDK 路径写入源码。
@@ -74,6 +74,7 @@ Linux/macOS 使用 `./gradlew`。生成测试 APK 不代表设备端测试已执
 
 ### 桌面打包与发行包检查
 
+- 桌面改动先安装 desktop/requirements-build.txt，执行 desktop/tests；Windows 可用 `./desktop/build-local.ps1` 测试并构建。
 - Windows 桌面打包：在 `desktop/` 执行 `./build_windows.bat`，需要 Miniconda。
 - Linux 桌面打包：在 Linux/WSL 的 `desktop/` 执行 `bash build_linux.sh`；PyInstaller 不跨平台打包。
 - 完整发行流程见 `dev/docs/release-guide.md`。以下脚本只打包已有构建，默认不上传：
@@ -87,7 +88,7 @@ python tools/check_project.py --release-dir release/v<版本号>
 
 ## 工程约定
 
-- 根目录 `VERSION` 是项目版本与 Android `versionName` 的来源；固件 `FW_VERSION` 与其保持一致，Android `versionCode` 随新版本递增。桌面历史版本独立维护。
+- 根目录 `VERSION` 是项目版本与 Android `versionName` 的来源；固件 `FW_VERSION` 与其保持一致，Android `versionCode` 随新版本递增。桌面由 desktop/VERSION 独立维护，并同步 __version__ 与 Windows version_info.txt。
 - 保持现有模块边界：Android 的 `ble/`、`protocol/`、`data/`、`ui/` 分别处理蓝牙、帧协议、请求状态与界面；界面不直接拼接底层 BLE 操作。
 - BLE 当前协议为 Nordic UART Service 上的协议 1，命令使用 UTF-8 JSON 加换行。事实来源为 `firmware/src/ble_service.cpp`、`firmware/src/command_router.cpp` 和 `tools/ble_console.py`；设计文档中的历史设想不能视为已实现功能。
 - 保持 MTU 分片、串行写入、回执确认、超时与断连语义；base64 分片先合并字节再解码 UTF-8，避免中文跨片损坏。
@@ -119,9 +120,11 @@ python tools/check_project.py --release-dir release/v<版本号>
 ## Notion 与持久工作空间
 
 - 使用 Notion 作为用户的持久共享记忆和工作空间，当前请求始终优先。
-- 每次会话首次处理依赖个人/项目背景的工作或写入 Notion 前，读取 [Agent Operating Guide v0.0.4](https://app.notion.com/p/404bb98a5e67815eb2dec5793d9cefd9)（发布于 2026-10-13）；会话开始获取已启用的 Notion Skills，仅在当前授权范围内使用。
+- 每次会话首次处理依赖个人/项目背景的工作或写入 Notion 前，读取 用户私人 Agent Operating Guide v0.0.4（位置由会话指令提供，不在公开仓库记录私人页面 ID）（发布于 2026-10-13）；会话开始获取已启用的 Notion Skills，仅在当前授权范围内使用。
 - 回答依赖个人或项目背景的问题前搜索 Notion；无结果时检查规范记忆目的地。保留来源、日期和不确定性，优先更新已有内容。
 - 保存持久决策、偏好、纠正和工作成果；不保存秘密、凭据、闲聊、临时进度或可从仓库恢复的代码。
 - 文档、研究与计划优先保存在现有私人 Documents 数据库；代码、README、仓库计划及本工程指南留在仓库，不重复归档可从仓库恢复的内容。
 - 新增结构、首次归档到共享空间、更改共享、删除、归档、移动、重组或安排定时工作前先获得批准。
 - 编辑前重读，写入后核验；遵守排除项和遗忘请求。Notion 不可用时明确说明未保存，仅报告实际完成的动作。
+
+电脑端独立预发行使用 `desktop-v<desktop/VERSION>` 标签，按 `dev/docs/release-guide.md` 顶部流程打包；无需为纯电脑端变更重建或换标固件/APK。`dev/tools/check_privacy.py --source` 检查当前源码，历史固件资产仅以 `--include-historical` 单独审计且保持原始哈希。

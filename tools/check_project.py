@@ -38,6 +38,11 @@ def check_sources():
     gradle = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
     if 'versionName = rootProject.file("../VERSION").readText().trim()' not in gradle:
         issues.append("Android versionName must read VERSION")
+    desktop_version = (ROOT / "desktop/VERSION").read_text().strip()
+    desktop_init = (ROOT / "desktop/src/mooncheck_app/__init__.py").read_text(encoding="utf-8")
+    desktop_pe = (ROOT / "desktop/version_info.txt").read_text(encoding="utf-8")
+    if f"__version__ = '{desktop_version}'" not in desktop_init or f"StringStruct('FileVersion','{desktop_version}')" not in desktop_pe:
+        issues.append("Desktop VERSION, Python and Windows file version differ")
     files = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT).decode().split("\0")
     python_count = link_count = 0
     for name in sorted(set(files) - {""}):

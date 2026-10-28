@@ -8,7 +8,8 @@
     python -m pip install bleak
 
 用法：
-    python tools/ble_console.py                      # 只有一台时自动连接；多台会列出让选
+    python tools/ble_console.py                      # 打开 GUI（双击同样适用）
+    python tools/ble_console.py --cli                # 原命令行交互模式
     python tools/ble_console.py --list               # 列出所有可见设备（名字/RSSI/MAC）
     python tools/ble_console.py --name WANAN-1A2B    # 按广播名连接（推荐多板使用）
     python tools/ble_console.py --index 0            # 按 --list 的序号连接
@@ -77,14 +78,14 @@ import argparse
 import asyncio
 import base64
 import json
+import re
 import sys
 import time
 
 try:
     from bleak import BleakClient, BleakScanner
 except ImportError:  # pragma: no cover
-    print("缺少依赖 bleak，请先执行：python -m pip install bleak")
-    sys.exit(2)
+    BleakClient = BleakScanner = None
 
 NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # 设备 -> 手机（Notify）
 NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # 手机 -> 设备（Write）
@@ -95,8 +96,11 @@ HELP_TEXT = __doc__.split("交互命令", 1)[1] if "交互命令" in __doc__ els
 class Console:
     """把交互命令翻译成 BLE JSON 指令并打印回执。"""
 
-    def __init__(self, client: BleakClient):
+    def __init__(self, client: BleakClient, output=None, on_message=None):
         self.client = client
+        self.output = output or print
+        self.on_message = on_message
+        self._secrets = set()
         self.next_id = 1
         self.pending_chunks = {}
         self.received = asyncio.Queue()
@@ -111,10 +115,10 @@ class Console:
         try:
             message = json.loads(text)
         except json.JSONDecodeError:
-            print("\n<= 收到非 JSON 回执，已忽略")
+            self.output("\n<= 收到非 JSON 回执，已忽略")
             return
         if not isinstance(message, dict):
-            print("\n<= 回执必须为 JSON 对象，已忽略")
+            self.output("\n<= 回执必须为 JSON 对象，已忽略")
             return
 
         # 长数据分片重组：b64 = base64 分片（新），chunk = 转义分片（兼容旧固件）
@@ -144,7 +148,7 @@ class Console:
                     self._print_json(full)
             except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
                 self.pending_chunks.clear()
-                print("\n<= 回执分片无效或不完整，请重新查询")
+                self.output("\n<= 回执分片无效或不完整，请重新查询")
             return
         self._print_json(text)
 
@@ -152,31 +156,54 @@ class Console:
     def _redact(value):
         secret_keys = {"pass", "password", "pwd", "bfp", "user", "openid", "access",
                        "refresh", "accesstoken", "refreshtoken", "value", "url",
-                       "session", "cookie", "authorization"}
+                       "session", "cookie", "authorization", "token", "ticket", "code",
+                       "access_token", "refresh_token", "x-checkin-ticket"}
         if isinstance(value, dict):
-            return {key: "<已隐藏>" if key.lower() in secret_keys else Console._redact(item)
+            return {key: (str(item)[:4] + "******" if key.lower() == "user" and isinstance(item, str) and "*" in item
+                          else "<已隐藏>" if key.lower() in secret_keys else Console._redact(item))
                     for key, item in value.items()}
         if isinstance(value, list):
             return [Console._redact(item) for item in value]
+        if isinstance(value, str):
+            value = re.sub(r'(?i)\b(SESSION|Cookie|Authorization|access_token|refresh_token|openid|ticket|code|password|token|bfp)\s*[:=]\s*[^\s;,<>]+',
+                           lambda m: m.group(1) + '=<已隐藏>', value)
+            return re.sub(r'https?://[^\s<>"\']+', '<已隐藏地址>', value)
         return value
 
-    @staticmethod
-    def _print_json(text: str) -> None:
+    def _safe_message(self, value):
+        if isinstance(value, dict):
+            return {key: self._safe_message(item) for key, item in self._redact(value).items()}
+        if isinstance(value, list):
+            return [self._safe_message(item) for item in value]
+        if isinstance(value, str):
+            for secret in sorted(self._secrets, key=len, reverse=True):
+                value = value.replace(secret, '<已隐藏>')
+        return value
+
+    def _print_json(self, text: str) -> None:
         try:
-            pretty = json.dumps(Console._redact(json.loads(text)), ensure_ascii=False, indent=2)
+            message = json.loads(text)
+            safe = self._safe_message(message)
+            pretty = json.dumps(safe, ensure_ascii=False, indent=2)
         except json.JSONDecodeError:
-            pretty = text
-        print(f"\n<= {pretty}")
+            self.output("回执不是完整 JSON，请重新查询")
+            return
+        self.output(f"\n<= {pretty}")
+        if self.on_message and isinstance(message, dict):
+            self.on_message(safe)
 
     async def send(self, payload: dict) -> None:
         payload.setdefault("id", self.next_id)
         self.next_id += 1
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         encoded = line.encode("utf-8")
+        for key, value in payload.items():
+            if key.lower() in {"pass", "password", "user", "bfp", "openid", "access", "refresh", "value", "url"} and isinstance(value, str) and len(value) >= 3:
+                self._secrets.add(value)
         if len(encoded) > 4096:
             raise ValueError("指令超过设备 4096 字节接收限制")
         displayed = self._redact(payload)
-        print(f"=> {json.dumps(displayed, ensure_ascii=False)}")
+        self.output(f"=> {json.dumps(displayed, ensure_ascii=False)}")
         packet_size = min(max(getattr(self.client, "mtu_size", 23) - 3, 20), 480)
         for start in range(0, len(encoded), packet_size):
             await self.client.write_gatt_char(NUS_RX, encoded[start:start + packet_size], response=True)
@@ -422,13 +449,13 @@ class Console:
                 else:
                     await self.send({"op": "account.remove", "label": args[1]})
             elif sub == "add":
-                if len(args) < 5:
+                if len(args) < 4:
                     print("  用法：account add <标签> <学号> <密码> [指纹|-] [lat lng [地址…]]")
                     print("        省略坐标 → 沿用设备当前坐标；指纹不需要就填 -")
                 else:
                     payload = {"op": "account.add", "label": args[1],
                                "user": args[2], "pass": args[3]}
-                    if args[4] != "-":
+                    if len(args) > 4 and args[4] != "-":
                         payload["bfp"] = args[4]
                     if len(args) >= 7:
                         try:
@@ -614,6 +641,7 @@ async def connect_with_retry(targets: list, timeout: float, attempts: int = 3) -
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description="晚安成电终端 BLE 调试台")
+    parser.add_argument("--cli", action="store_true", help="使用命令行交互模式")
     parser.add_argument("--addr", help="直接指定设备 MAC 地址（跳过扫描）")
     parser.add_argument("--name", help="按广播名选择设备（如 WANAN-1A2B，可只写前缀）")
     parser.add_argument("--index", type=int, help="按扫描结果序号选择（先配合 --list 看列表）")
@@ -623,6 +651,9 @@ async def main() -> int:
     parser.add_argument("--timeout", type=float, default=45.0, help="连接超时秒数（默认 45）")
     parser.add_argument("commands", nargs="*", help="要执行的命令（不给则进入交互模式）")
     args = parser.parse_args()
+    if BleakClient is None:
+        print("缺少依赖 bleak，请先执行：python -m pip install bleak")
+        return 2
 
     # 多板场景：不给 --name/--index/--addr 时**绝不自动挑一台**，避免连错设备
     targets = await resolve_target(args)
@@ -669,6 +700,10 @@ async def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(asyncio.run(main()))
+        if len(sys.argv) == 1 or sys.argv[1:] == ["--gui"]:
+            from ble_gui import launch
+            launch()
+        else:
+            sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
         print("\n已中断")

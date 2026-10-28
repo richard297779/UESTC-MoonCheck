@@ -137,7 +137,7 @@ try {
         $rows += "| $([IO.Path]::GetFileName($apk)) | Android 8+ BLE 控制端；Debug 签名测试版 |"
         $androidMetadata = @{ version=$ver; versionCode=$versionCode; package='io.mooncheck.app'; buildType='debug'; minSdk=26; targetSdk=35 }
     }
-    Write-Host '桌面版 1.0.0 未支持微信票据，不随本次发行重新打包。'
+    Write-Host '桌面 1.1.0 独立构建和验收，不随本次固件发行重新打包。'
     $guide = Join-Path $Rel 'PACKAGE.md'
     @(
         "# MoonCheck $ver 发行包",'',
@@ -151,7 +151,7 @@ try {
         ('所选板型：' + (($targets | ForEach-Object { $_.Key + ' [' + $_.Profile.physicalValidation + ']' }) -join '；')),
         '仅在本人受控的近距离环境配置；固件当前未提供 BLE 配对加密或应用鉴权。',
         '同一 Debug 签名可覆盖升级；签名不同需卸载旧测试版。凭据不保存在手机，设备配置保留。',
-        '桌面旧版本尚不支持微信票据，本发行包不包含桌面程序。',
+        '桌面 1.1.0 有独立微信票据实现，本固件发行包不包含桌面程序。',
         ('完整指南：https://github.com/' + $Repo + '/blob/' + $tag + '/docs/quickstart.md'),
         '核验：manifest 中列出内部各文件的 SHA-256，GitHub 单独资产 sha256.txt 还包含整包 ZIP 的摘要。'
     ) | Set-Content -LiteralPath $guide -Encoding UTF8
@@ -193,7 +193,7 @@ try {
         'APK 为 Debug 签名测试版，支持 Android 8+；不会替代 ESP32，手机不需要常驻。',
         '功能联调验收状态见 docs/project-health.md；完整兼容矩阵和正式签名发布需独立核验。',
         '当前 BLE 配置链路未配置配对/加密/设备鉴权，请在本人受控的近距离环境使用。',
-        '桌面版尚未实现微信票据，本版不重新发行桌面二进制。', '',
+        '桌面 1.1.0 独立构建，本固件发行不重新打包桌面二进制。', '',
         '## 构建与溯源', "- 源码提交：$commit", "- 固件与 APK：$ver；BLE 协议 1",
         '- SHA-256：见 sha256.txt；ZIP 内清单见 release-manifest.json。',
         '- 验证结果：见 docs/project-health.md；应用说明见 android/README.md。',

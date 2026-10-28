@@ -161,8 +161,7 @@ class HttpClient(object):
         except urllib.error.HTTPError as e:
             status, hdrs, payload = e.code, e.headers, e.read()
         except (urllib.error.URLError, OSError, TimeoutError) as e:
-            reason = getattr(e, 'reason', e)
-            raise NetworkError('%s（请求 %s）' % (reason, url.split('?')[0]))
+            raise NetworkError('网络连接失败（%s）' % type(e).__name__) from None
 
         self.jar.update(url, hdrs)
         enc = (hdrs.get('Content-Encoding') or '').lower()
@@ -177,9 +176,10 @@ class HttpClient(object):
 
         resp = Resp(status, hdrs, payload, url)
         loc = resp.header('Location')
+        from .privacy import diagnostic_url
         self.log('%-4s %s -> %s%s%s' % (
-            method, url[:120], status,
-            ('  Location: ' + loc) if loc else '',
+            method, diagnostic_url(url), status,
+            ('  Location: ' + diagnostic_url(loc)) if loc else '',
             ('  [%d B]' % len(payload)) if payload else ''))
         return resp
 
@@ -194,7 +194,7 @@ class HttpClient(object):
                 continue
             r.history = hops
             return r
-        raise NetworkError('重定向次数过多: %s' % hops)
+        raise NetworkError('重定向次数过多')
 
 
 def zlib_decompress(payload):

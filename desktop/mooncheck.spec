@@ -7,6 +7,7 @@ Windows 产物 dist/windows/MoonCheck.exe；Linux 产物 dist/linux/MoonCheck（
 """
 
 import os
+from PyInstaller.utils.hooks import collect_submodules
 
 _here = os.path.abspath(SPECPATH) if 'SPECPATH' in dir() else os.path.dirname(os.path.abspath(__file__))
 
@@ -21,10 +22,10 @@ a = Analysis(
         'mooncheck_app', 'mooncheck_app.aes', 'mooncheck_app.paths',
         'mooncheck_app.config', 'mooncheck_app.http_client', 'mooncheck_app.cas_auth',
         'mooncheck_app.checkin_api', 'mooncheck_app.push', 'mooncheck_app.service',
-        'mooncheck_app.cli',
+        'mooncheck_app.cli', 'mooncheck_app.wechat', 'mooncheck_app.wechat_wire', 'mooncheck_app.wechat_transport',
         'mooncheck_app.gui', 'tkinter', 'tkinter.ttk', 'tkinter.filedialog',
         'tkinter.messagebox', 'tkinter.scrolledtext',
-    ],
+    ] + collect_submodules('Crypto', filter=lambda name: not name.startswith('Crypto.SelfTest')),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -41,6 +42,7 @@ exe = EXE(
     a.datas,
     [],
     name=APP_NAME,
+    version=os.path.join(_here, 'version_info.txt') if os.name == 'nt' else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

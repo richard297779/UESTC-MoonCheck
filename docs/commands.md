@@ -1,7 +1,7 @@
 # 指令手册
 
 设备只接受 **JSON 指令**（格式 `{"op":"...","id":N,...}`）。日常使用不需要记 JSON：
-仓库里的 `tools/ble_console.py` 会把下面的短命令自动转成 JSON；[Android APK](../android/README.md) 提供对应按键与表单。
+仓库里的 `tools/ble_console.py` 会把下面的短命令自动转成 JSON；无参数或双击默认打开[电脑 GUI](ble-gui.md)，命令行交互请加 `--cli`。[Android APK](../android/README.md) 也提供对应按键与表单。
 
 ```powershell
 python tools/ble_console.py --name WANAN-XXXX

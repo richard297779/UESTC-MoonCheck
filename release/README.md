@@ -33,3 +33,7 @@ release/
 5. `.gitignore` 仅保留迁移前已跟踪文件在新路径的追踪资格；新 APK、固件、暂存目录、密钥和 SDK 继续忽略。Git 干净克隆不一定含上述全部本机产物。
 
 2026-10-27 整理记录：迁移 30 个文件/目录条目，迁移前后核对全部 166 个发行文件的 SHA-256，内容一致；随后仅修正文档相对链接。既有 v0.6.0/v0.7.0 发行资产与摘要未改写。
+
+## 独立电脑端预发行版
+
+[desktop-v1.1.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供桌面 Windows ZIP 和 BLE GUI 源码 ZIP，尚待实机联调。本地产物位于被忽略的 `desktop/dist/release/desktop-v1.1.0/`，不混入上述固件目录。详见[发行说明](../dev/docs/computer-release.md)。

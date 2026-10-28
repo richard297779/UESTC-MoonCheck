@@ -4,7 +4,7 @@
 - 文件位置由 paths.config_path() 决定（exe 同目录）。
 - 首次加载自动生成默认配置；未知键原样保留，方便手工加注释性字段。
 - 保存走「临时文件 + 原子替换」，Linux/macOS 下权限收紧到 0600。
-- 密码与会话 Cookie 是敏感值：show 默认打码，只有 --all 才显示原文。
+- 敏感字段始终打码，兼容参数 --all 也不会显示原文。
 - 对齐固件 0.4.0 语义：
     schedule        打卡时间（到点窗口内才允许 auto/checkin，--force 可越窗）
     accounts        多账号表（≤6，与固件一致；为空=用顶层凭证的单人模式）
@@ -41,6 +41,7 @@ LOCATION_DEFAULTS = {
 
 ACCOUNT_TEMPLATE = {
     'label': '',
+    'wechat': {},
     'enabled': True,
     'student_id': '',
     'password': '',
@@ -65,7 +66,8 @@ CHANNEL_TEMPLATE = {
 }
 
 DEFAULTS = {
-    'student_id': '',
+    'wechat': {},
+    'config_schema': 2,    'student_id': '',
     'password': '',
     'browser_fingerprint': '',
     'session_cookie': '',
@@ -135,6 +137,7 @@ def load(create=True):
     with open(path, 'r', encoding='utf-8') as f:
         loaded = json.load(f)
     cfg = _merge(default_config(), loaded if isinstance(loaded, dict) else {})
+    cfg['config_schema'] = 2
     # accounts/notify.channels 是数组：_merge 里 extra 直接覆盖，元素补齐模板键
     cfg['accounts'] = [_merge(copy.deepcopy(ACCOUNT_TEMPLATE), a)
                        for a in cfg.get('accounts') or [] if isinstance(a, dict)]
@@ -197,6 +200,7 @@ def set_value(cfg, dotted, raw):
         if not isinstance(node, dict):
             raise ValueError('路径 %s 不是对象' % '.'.join(parts[:-1]))
     old = node.get(parts[-1])
+    if dotted == 'student_id': reset_identity(node,value)
     node[parts[-1]] = value
     return old, value
 
@@ -260,6 +264,7 @@ def effective_accounts(cfg, only_enabled=True):
             'last_date': '',
             'last_ok': False,
             'last_msg': '',
+            'wechat': cfg.get('wechat') or {},
             '_virtual': True,   # 不落盘，写回时落到顶层键
         }]
     return accounts
@@ -273,6 +278,28 @@ def account_location(cfg, account):
         merged.update(loc)
         return merged
     return dict(cfg.get('location') or LOCATION_DEFAULTS)
+
+
+def reset_identity(account, student_id):
+    if str(account.get('student_id') or '') != str(student_id or ''):
+        account.update(wechat={},session_cookie='',session_saved_at='',last_date='',last_ok=False,last_msg='')
+
+
+def save_account_wechat(cfg, account, credentials):
+    target = cfg if account.get('_virtual') else account
+    target['wechat'] = dict(credentials)
+    account['wechat'] = target['wechat']
+    save(cfg)
+
+
+def redact_copy(value):
+    """Export recursively; credentials/URLs cannot escape through new fields."""
+    if isinstance(value, dict):
+        from .privacy import SECRET_KEYS
+        sensitive = SECRET_KEYS
+        return {key: ('' if key.lower() in sensitive else redact_copy(item)) for key,item in value.items()}
+    if isinstance(value, list): return [redact_copy(item) for item in value]
+    return value
 
 
 def save_account_session(cfg, account, session):
@@ -351,7 +378,7 @@ def in_window(cfg, now=None):
 
 def datetime_now():
     import datetime
-    return datetime.datetime.now()
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
 
 
 def _now_iso():
@@ -486,10 +513,9 @@ def masked_value(cfg, dotted):
     if value in (None, ''):
         return '(未设置)'
     text = str(value)
-    if dotted in ('password',):
-        return '*' * max(6, len(text))
-    if dotted in ('session_cookie',):
-        return text[:6] + '…' + ('(共 %d 字符)' % len(text))
+    from .privacy import SECRET_KEYS
+    if dotted.split('.')[-1].lower() in SECRET_KEYS:
+        return '<已隐藏>'
     if dotted == 'notify.url':
         return mask_url(text)
     return text
@@ -497,7 +523,5 @@ def masked_value(cfg, dotted):
 
 def mask_url(url):
     """与固件 AppConfig::maskUrl 同语义：只留 scheme+host，路径打码。"""
-    m = re.match(r'^(https?)://([^/]+)(/.*)?$', url or '')
-    if not m:
-        return url
-    return '%s://%s/***(len=%d)' % (m.group(1), m.group(2), len(url))
+    from .privacy import diagnostic_url
+    return diagnostic_url(url)

@@ -16,7 +16,7 @@ Result.kind：ok / warn / fail / mfa / not_configured。
 import datetime
 import json
 
-from . import aes, cas_auth, checkin_api, config, push
+from . import aes, cas_auth, checkin_api, config, push, wechat
 from .http_client import HttpClient, NetworkError, DEFAULT_UA
 
 
@@ -88,7 +88,7 @@ def probe(client, api, log):
     try:
         j = r.json()
     except Exception:
-        return False, None, '响应不是 JSON：%s' % r.text[:120]
+        return False, None, '响应不是 JSON（内容已隐藏）'
     if j.get('code') != 0:
         return False, None, 'code=%s msg=%s' % (j.get('code'), j.get('msg'))
     return True, (j.get('data') or {}), ''
@@ -250,6 +250,10 @@ def do_status(cfg, log, label=None):
 def _checkin_one(cfg, log, acct, force, use_reverse):
     """单账号打卡全链。返回 (kind, label, text, rows)。不抛异常。"""
     label = acct.get('label') or 'self'
+    try:
+        wechat.validate_credentials(acct.get('wechat'))
+    except wechat.ProtocolError as error:
+        return ('not_configured', label, str(error), [])
     client, api, ok, note, data = _ensure_session(cfg, log, acct)
     if not ok:
         return ('fail', label, '前置检查失败：%s' % note, [])
@@ -272,22 +276,36 @@ def _checkin_one(cfg, log, acct, force, use_reverse):
     payload = api.build_payload(loc, client.ua, reverse_geocode=addr)
     log('%s：提交打卡 ...' % label)
     try:
-        r = api.submit(payload)
+        ticket = wechat.ensure_ticket(cfg, acct, log)
+        if not force and not config.in_window(cfg):
+            return ('warn', label, '取票后已超过本地打卡窗口，未提交', [])
+        r = api.submit(payload, ticket=ticket)
+        ticket = None
+    except wechat.ProtocolError as error:
+        return ('fail', label, str(error), [])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ('fail', label, '微信取票链路失败，请检查授权和网络；未重放提交', [])
     except NetworkError as e:
         return ('fail', label, '网络不可达：%s' % e, [])
+    try:
+        rejected = str(r.json().get('code')) in ('46001','46002','46003')
+    except (ValueError, AttributeError):
+        rejected = False
+    if rejected:
+        return ('fail', label, '微信票据失效，本轮停止；下一轮重新取票，不自动重放提交', [])
     if r.status != 200:
-        return ('fail', label, '请求失败：HTTP %s %s' % (r.status, r.text[:160]), [])
+        return ('fail', label, '请求失败：HTTP %s（响应内容已隐藏）' % r.status, [])
     try:
         j = r.json()
     except Exception:
-        return ('fail', label, '响应不是 JSON：%s' % r.text[:160], [])
+        return ('fail', label, '响应不是 JSON（内容已隐藏）', [])
     if j.get('code') != 0:
         msg = 'code=%s msg=%s' % (j.get('code'), j.get('msg'))
         kind = 'mfa' if '证' in str(j.get('msg') or '') else 'fail'
         return (kind, label, msg, [])
     ok2, data2, note2 = probe(client, api, log)
     summary = checkin_api.safe_summary(data2) if ok2 else {}
-    today = datetime.date.today().isoformat()
+    today = config.datetime_now().date().isoformat()
     if summary.get('recordStatusCode') == 'CHECKED_IN':
         if summary.get('abnormalFlag'):
             config.save_account_result(cfg, acct, today, True, '已打卡但标记异常')
@@ -404,6 +422,17 @@ def selftest(cfg, log):
     rows.append(('AES 加密自检', 'PASS' if ok else 'FAIL: %s' % detail))
     ok_all = ok_all and ok
 
+    try:
+        from . import wechat_wire as wire
+        key = bytes(range(24)); blob = wire.layout_encrypt(key,b'fixture',b'selftest',b'\0'*12)
+        if wire.layout_decrypt(key,b'fixture',blob) != b'selftest': raise ValueError()
+        first,second = wire.keypair(),wire.keypair()
+        if wire.shared(first,wire.public(second)) != wire.shared(second,wire.public(first)): raise ValueError()
+        rows.append(('微信 AES-192-GCM / P-256','PASS'))
+    except Exception:
+        rows.append(('微信加密依赖','FAIL：请安装 desktop/requirements.txt'))
+        ok_all = False
+
     problems = config.validate(cfg)
     errs = [p for p in problems if p[0] == 'error']
     warns = [p for p in problems if p[0] == 'warn']
@@ -464,3 +493,17 @@ def _minutes_bad(sched):
         if not _re.match(r'^([01]?\d|2[0-3]):[0-5]\d$', str(sched.get(key) or '')):
             return True
     return False
+
+
+def do_wechat_test(cfg, log, label=None):
+    """Only refresh/code/bind/ticket; never POST a check-in or send notifications."""
+    acct = resolve_account(cfg,label) if label else (config.effective_accounts(cfg)[0] if not cfg.get('accounts') else None)
+    if acct is None:
+        return Result('not_configured','多人模式请指定账号标签')
+    try:
+        ticket = wechat.ensure_ticket(cfg,acct,log)
+        return Result('ok','微信取票通过（43 字符，未提交打卡）',rows=[('账号',acct['label'])])
+    except wechat.ProtocolError as error:
+        return Result('fail',str(error))
+    except Exception:
+        return Result('fail','微信链路失败，请检查网络与授权；未提交打卡')

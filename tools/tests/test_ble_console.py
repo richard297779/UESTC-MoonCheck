@@ -28,6 +28,13 @@ class MockClient:
 
 
 class TestWxCommands(unittest.IsolatedAsyncioTestCase):
+    async def test_echoed_secrets_and_text_headers_are_redacted(self):
+        await self.console.send({'op': 'wx.import', 'access': 'fixture-private-access'})
+        self.console._on_notify(None, b'{"msg":"echo fixture-private-access SESSION=unknown-private", "ticket":"private-ticket"}')
+        output = self.output.getvalue()
+        for secret in ('fixture-private-access', 'unknown-private', 'private-ticket'):
+            self.assertNotIn(secret, output)
+
     async def asyncSetUp(self):
         self.client = MockClient()
         self.console = Console(self.client)
@@ -72,6 +79,11 @@ class TestWxCommands(unittest.IsolatedAsyncioTestCase):
         await self.console.run_command("wx import 0 openid access refresh not-a-timestamp")
 
         self.assertEqual(self.client.writes, [])
+
+    async def test_account_add_allows_omitted_optional_fingerprint(self):
+        await self.console.run_command('account add A01 fixture-user fixture-password')
+        self.assertEqual(self.client.writes[0]['op'], 'account.add')
+        self.assertNotIn('bfp', self.client.writes[0])
 
     async def test_raw_command_requires_a_json_object(self):
         await self.console.run_command("raw []")

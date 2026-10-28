@@ -16,13 +16,13 @@ import getpass
 import os
 import sys
 
-from . import config, paths, push, service
+from . import config, paths, push, service, privacy
 
 
 def _log_factory(verbose):
     def log(msg):
         if verbose:
-            print(msg)
+            print(privacy.sanitize(msg, config.load(create=False)))
     return log
 
 
@@ -30,9 +30,10 @@ def _print_result(res):
     stream = sys.stdout
     mark = {'ok': '[OK]  ', 'warn': '[WARN]', 'fail': '[FAIL]',
             'mfa': '[MFA] ', 'not_configured': '[NEED]'}
-    stream.write('%s %s\n' % (mark.get(res.kind, '[..]'), res.text))
+    cfg = config.load(create=False)
+    stream.write('%s %s\n' % (mark.get(res.kind, '[..]'), privacy.sanitize(res.text, cfg)))
     for name, value in res.rows:
-        stream.write('  - %s: %s\n' % (name, value))
+        stream.write('  - %s: %s\n' % (name, privacy.sanitize(value, cfg)))
 
 
 # ------------------------------------------------------------------ config
@@ -42,7 +43,7 @@ def cmd_config(rest):
     parser.add_argument('action', choices=['show', 'init', 'set', 'path'])
     parser.add_argument('key', nargs='?')
     parser.add_argument('value', nargs='?')
-    parser.add_argument('--all', action='store_true', help='显示敏感字段原文')
+    parser.add_argument('--all', action='store_true', help='兼容参数；敏感字段仍隐藏')
     parser.add_argument('--force', action='store_true', help='init 时覆盖已有文件')
     ns = parser.parse_args(rest)
 
@@ -65,11 +66,7 @@ def cmd_config(rest):
     if ns.action == 'show':
         print('# %s' % paths.config_path())
         for key in sorted(config.EDITABLE):
-            if ns.all:
-                value = config.get(cfg, key)
-                value = '(未设置)' if value in (None, '') else value
-            else:
-                value = config.masked_value(cfg, key)
+            value = config.masked_value(cfg, key)
             print('  %-28s %s   # %s' % (key, value, config.describe_field(key)))
         _print_accounts(cfg)
         _print_channels(cfg)
@@ -176,6 +173,7 @@ def cmd_account(rest):
         acct = config.find_account(cfg, ns.label) or dict(config.ACCOUNT_TEMPLATE)
         acct['label'] = ns.label
         if ns.student_id:
+            config.reset_identity(acct,ns.student_id)
             acct['student_id'] = ns.student_id
         if ns.password:
             acct['password'] = ns.password
@@ -428,15 +426,57 @@ def cmd_sched(rest):
     return 0
 
 
+def cmd_wechat(rest, verbose=False):
+    import json
+    from . import wechat
+    parser = argparse.ArgumentParser(prog='MoonCheck wx', description='微信授权与取票（测试不提交打卡）')
+    parser.add_argument('action', choices=['import','status','test','clear'])
+    parser.add_argument('-a','--account')
+    parser.add_argument('--file', help='从本人授权 JSON 导入，避免把凭据放到命令参数')
+    ns = parser.parse_args(rest)
+    cfg = config.load()
+    accounts = config.effective_accounts(cfg, only_enabled=False)
+    if ns.action == 'status':
+        for acct in accounts:
+            if ns.account and ns.account != acct['label']: continue
+            value = acct.get('wechat') or {}
+            print('%s: 授权%s；到期 Unix 秒=%s' % (acct['label'], '已保存' if value.get('refresh') else '未配置',value.get('expires_at',0)))
+        return 0
+    acct = service.resolve_account(cfg,ns.account) if ns.account else (accounts[0] if not cfg.get('accounts') else None)
+    if acct is None:
+        print('多人模式必须使用 -a 指定已有账号'); return 2
+    try:
+        if ns.action == 'import':
+            if ns.file:
+                with open(ns.file,'r',encoding='utf-8-sig') as stream:
+                    text = stream.read(65537)
+                if len(text)>65536: raise ValueError('授权文件过大')
+                value = json.loads(text)
+            else:
+                if not sys.stdin.isatty(): raise ValueError('请使用交互终端或 --file 授权文件')
+                value = {key:getpass.getpass(key+'（不回显）: ') for key in ('openid','access','refresh')}
+                value['expires_at'] = input('绝对到期 Unix 秒（回车=0，首次刷新）: ') or 0
+            value = wechat.validate_credentials(value)
+            config.save_account_wechat(cfg,acct,value)
+            print('授权已保存到指定账号，不显示凭据'); return 0
+        if ns.action == 'clear':
+            config.save_account_wechat(cfg,acct,{})
+            print('该账号微信授权已清除'); return 0
+        result = service.do_wechat_test(cfg,_log_factory(verbose),label=acct['label'])
+        _print_result(result); return result.exit_code()
+    except (ValueError,OSError,TypeError):
+        print('微信授权操作失败，请检查文件格式、输入或文件权限（不显示敏感内容）'); return 2
+
+
 # ------------------------------------------------------------------ 主入口
 
-def main_cli(argv):
+def _main_cli(argv):
     parser = argparse.ArgumentParser(
         prog='MoonCheck',
         description='电子科技大学「晚安成电」晚间打卡桌面工具（单文件版）',
         epilog='不带参数运行 = 打开图形界面。文档见 desktop/README.md。')
     parser.add_argument('command', nargs='?', default='gui',
-                        help='gui|selftest|status|login|checkin|auto|config|account|notify|sched|help')
+                        help='gui|selftest|status|login|checkin|auto|config|account|notify|sched|wx|help')
     parser.add_argument('-v', '--verbose', action='store_true', help='打印每步 HTTP 日志')
     parser.add_argument('--config', help='指定 config.json 路径（默认为程序同目录）')
     from . import __version__
@@ -454,6 +494,8 @@ def main_cli(argv):
         from .gui import run_gui
         return run_gui()
 
+    if args.command == 'wx':
+        return cmd_wechat(rest,args.verbose)
     if args.command == 'config':
         return cmd_config(rest)
     if args.command == 'account':
@@ -500,3 +542,20 @@ def main_cli(argv):
 
     _print_result(res)
     return res.exit_code()
+
+
+def main_cli(argv):
+    from .operation_lock import operation_lock, OperationBusy
+    locator = argparse.ArgumentParser(add_help=False)
+    locator.add_argument('--config'); locator.add_argument('-v','--verbose',action='store_true')
+    locator.add_argument('command',nargs='?',default='gui')
+    ns,_ = locator.parse_known_args(argv)
+    if ns.config: os.environ['MOONCHECK_CONFIG'] = os.path.abspath(ns.config)
+    if ns.command in ('gui','help',''):
+        return _main_cli(argv)
+    try:
+        with operation_lock(paths.config_path()): return _main_cli(argv)
+    except OperationBusy as error:
+        print(str(error)); return 1
+    except OSError:
+        print('配置文件不可访问，请检查路径与权限'); return 2

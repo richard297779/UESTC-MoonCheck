@@ -71,14 +71,17 @@ class CheckinApi(object):
         return self.client.request('GET', '%s?lat=%s&lng=%s' % (self.ep_reverse, lat, lng),
                                    headers=self.h5_headers)
 
-    def submit(self, payload):
+    def submit(self, payload, ticket=None):
         """EP10：提交打卡。"""
-        return self.client.request('POST', self.ep_checkin,
-                                   headers=self.h5_headers, json_body=payload)
+        import re
+        if not isinstance(ticket, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', ticket):
+            raise ValueError('有效的微信操作票据是提交前置条件')
+        headers = dict(self.h5_headers, **{'X-Checkin-Ticket': ticket})
+        return self.client.request('POST', self.ep_checkin, headers=headers, json_body=payload)
 
     def build_payload(self, loc, user_agent, reverse_geocode=None, now=None):
         """按实测成功载荷逐字段构造（字段裁剪有产生异常记录的风险，不做裁剪）。"""
-        now = now or datetime.datetime.now()
+        now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
         return {
             'latitude': loc['latitude'],
             'longitude': loc['longitude'],

@@ -16,7 +16,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from . import __version__, config, paths, push, service
+from . import __version__, config, paths, push, service, wechat
 
 _ROW_PAD = {'padx': 8, 'pady': 3}
 _STYLE_TEXTS = {'0': '0 GET 模板', '1': '1 POST 文本', '2': '2 POST JSON'}
@@ -60,6 +60,9 @@ class App(object):
         self._build_accounts(self.tab_accounts)
         self._build_notify(self.tab_notify)
         self._build_schedule(self.tab_schedule)
+        self.tab_wechat = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_wechat, text='微信授权')
+        self._build_wechat(self.tab_wechat)
         self._build_actions(left)
         self._build_log(right)
 
@@ -68,6 +71,68 @@ class App(object):
         self._refresh_status_line()
         root.protocol('WM_DELETE_WINDOW', self._on_close)
         self.root.after(80, self._drain_queue)
+
+    def _build_wechat(self, parent):
+        parent.columnconfigure(1, weight=1)
+        ttk.Label(parent, text='每个账号独立授权；初始凭据由本人扫码准备。测试仅取票，不提交。', wraplength=410).grid(row=0,column=0,columnspan=2,padx=12,pady=12,sticky='w')
+        self.wx_account = tk.StringVar(value='self')
+        ttk.Label(parent,text='授权所属账号').grid(row=1,column=0,padx=12,sticky='w')
+        self.wx_picker = ttk.Combobox(parent,textvariable=self.wx_account,state='readonly',postcommand=self._wx_choices)
+        self.wx_picker.grid(row=1,column=1,padx=12,pady=6,sticky='ew')
+        self.wx_vars = {}
+        for row,(key,label) in enumerate([('openid','OpenID'),('access','Access token'),('refresh','Refresh token'),('expires_at','绝对到期 Unix 秒')],2):
+            variable = tk.StringVar(value='0' if key=='expires_at' else '')
+            self.wx_vars[key] = variable
+            ttk.Label(parent,text=label).grid(row=row,column=0,padx=12,sticky='w')
+            ttk.Entry(parent,textvariable=variable,show='' if key=='expires_at' else '*').grid(row=row,column=1,padx=12,pady=6,sticky='ew')
+        controls = ttk.Frame(parent); controls.grid(row=6,column=0,columnspan=2,pady=12)
+        ttk.Button(controls,text='导入并保存',command=self._wx_import).pack(side='left',padx=4)
+        ttk.Button(controls,text='取票测试',command=lambda:self._run('wx_test')).pack(side='left',padx=4)
+        ttk.Button(controls,text='清除该账号授权',command=self._wx_clear).pack(side='left',padx=4)
+        self.wx_status = tk.StringVar()
+        ttk.Label(parent,textvariable=self.wx_status,wraplength=410).grid(row=7,column=0,columnspan=2,padx=12,sticky='w')
+        ttk.Label(parent,text='到期时间填 0 可在首次使用时刷新。导入会立即保存；token 不回填到界面。使用指南：desktop/README.md。不要同时在固件与电脑运行同一授权。',wraplength=410).grid(row=8,column=0,columnspan=2,padx=12,pady=12,sticky='w')
+        self.wx_picker.bind('<<ComboboxSelected>>',lambda _event:self._wx_refresh_status())
+
+    def _wx_choices(self):
+        labels = [a['label'] for a in config.effective_accounts(self.work,only_enabled=False)]
+        self.wx_picker['values'] = labels
+        if self.wx_account.get() not in labels: self.wx_account.set(labels[0] if labels else '')
+
+    def _wx_refresh_status(self):
+        acct = service.resolve_account(self.work,self.wx_account.get())
+        present = bool(acct and (acct.get('wechat') or {}).get('refresh'))
+        self.wx_status.set('该账号授权：'+('已保存（取票测试可验证有效性）' if present else '未配置'))
+        for key,var in self.wx_vars.items(): var.set('0' if key=='expires_at' else '')
+
+    def _wx_import(self):
+        if self.busy: return
+        errors = self._collect()
+        if errors:
+            messagebox.showerror('配置有误','\n'.join(errors)); return
+        acct = service.resolve_account(self.work,self.wx_account.get())
+        if acct is None:
+            messagebox.showerror('微信授权','请先创建并选择账号'); return
+        try:
+            value = wechat.validate_credentials({key:var.get().strip() for key,var in self.wx_vars.items()})
+            from .operation_lock import operation_lock
+            with operation_lock(paths.config_path()): config.save_account_wechat(self.work,acct,value)
+        except (ValueError,OSError,RuntimeError):
+            messagebox.showerror('微信授权','导入失败，请检查字段和文件权限'); return
+        self.cfg = copy.deepcopy(self.work)
+        self._wx_refresh_status(); self._log('[OK] 微信授权已保存（不显示凭据）')
+
+    def _wx_clear(self):
+        if self.busy or not messagebox.askyesno('清除授权','只清除当前所选账号的微信授权？'): return
+        acct = service.resolve_account(self.work,self.wx_account.get())
+        if acct:
+            from .operation_lock import operation_lock, OperationBusy
+            try:
+                with operation_lock(paths.config_path()): config.save_account_wechat(self.work,acct,{})
+            except (OperationBusy,OSError):
+                messagebox.showerror('微信授权','其他实例正在操作或文件不可写'); return
+            self.cfg = copy.deepcopy(self.work)
+            self._wx_refresh_status()
 
     # ------------------------------------------------------------ 基本页
 
@@ -210,6 +275,7 @@ class App(object):
         if dup:
             raise ValueError('标签重复：%s' % label)
         acct['label'] = label
+        config.reset_identity(acct,self.acct_vars['student_id'].get().strip() or acct.get('student_id'))
         for key in ('student_id', 'password', 'browser_fingerprint'):
             value = self.acct_vars[key].get()
             if key == 'password':
@@ -495,7 +561,7 @@ class App(object):
             inside = config.in_window(cfg)
             self.sched_hint.configure(
                 text='现在 %s，%s窗口内' % (
-                    datetime.datetime.now().strftime('%H:%M'),
+                    config.datetime_now().strftime('%H:%M'),
                     '在' if inside else '不在'))
         except Exception:
             self.sched_hint.configure(text='时间格式应为 HH:MM')
@@ -542,6 +608,10 @@ class App(object):
         self.sched_at.set(sched.get('checkin_at') or '22:00')
         self.sched_end.set(sched.get('window_end') or '23:30')
         self._refresh_acct_list()
+        labels = [a['label'] for a in config.effective_accounts(self.work,only_enabled=False)]
+        self.wx_picker['values'] = labels
+        if self.wx_account.get() not in labels: self.wx_account.set(labels[0] if labels else '')
+        self._wx_refresh_status()
         self._refresh_chan_list()
         self._refresh_link_list()
         self._refresh_sched_hint()
@@ -585,6 +655,14 @@ class App(object):
     # ------------------------------------------------------------ 保存/导出
 
     def _on_save(self):
+        from .operation_lock import operation_lock, OperationBusy
+        if self.busy: return
+        try:
+            with operation_lock(paths.config_path()): self._save_work()
+        except (OperationBusy,OSError):
+            messagebox.showerror('配置保存','其他实例正在操作或文件不可写，请稍后再试')
+
+    def _save_work(self):
         errors = self._collect()
         if errors:
             messagebox.showerror('配置有误', '\n'.join(errors))
@@ -615,11 +693,7 @@ class App(object):
             return
         self._collect()
         cfg = copy.deepcopy(self.work)
-        cfg['password'] = 'PUT_YOUR_PASSWORD'
-        cfg['session_cookie'] = ''
-        for acct in cfg.get('accounts') or []:
-            acct['password'] = 'PUT_YOUR_PASSWORD'
-            acct['session_cookie'] = ''
+        cfg = config.redact_copy(cfg)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         self._log('[OK]  已导出脱敏副本（所有密码/会话已置空）：%s' % path)
@@ -635,6 +709,9 @@ class App(object):
             messagebox.showerror('配置有误', '\n'.join(errors))
             return
         cfg = copy.deepcopy(self.work)
+        notify_target = copy.deepcopy(self._notify_target()) if action == 'notify_test' else None
+        wx_label = self.wx_account.get()
+        force, dry_run, use_reverse = self.force_var.get(), self.dry_run_var.get(), self.reverse_var.get()
         self.busy = True
         self._set_buttons_enabled(False)
         self._log('—— %s 开始 ——' % action)
@@ -642,29 +719,43 @@ class App(object):
         def job():
             log = self.queue.put
             try:
-                if action == 'selftest':
-                    res = service.selftest(cfg, log)
-                elif action == 'login':
-                    res = service.do_login(cfg, log)
-                elif action == 'status':
-                    res = service.do_status(cfg, log)
-                elif action == 'checkin':
-                    res = service.do_checkin(cfg, log, force=self.force_var.get(),
-                                             dry_run=self.dry_run_var.get(),
-                                             use_reverse=self.reverse_var.get())
-                elif action == 'notify_test':
-                    target = self._notify_target()
-                    target = copy.deepcopy(target)
-                    ok, note = push.send(target, '推送测试',
-                                         'MoonCheck 桌面端测试消息 %s' %
-                                         datetime.datetime.now().strftime('%H:%M:%S'),
-                                         timeout=cfg.get('timeout') or 15)
-                    res = service.Result('ok' if ok else 'fail', note)
-                else:
-                    res = service.Result('fail', '未知动作 ' + action)
-            except Exception as e:  # 兜底：工作线程不崩窗
-                res = service.Result('fail', '异常：%s' % e)
+                from .operation_lock import operation_lock
+                with operation_lock(paths.config_path()):
+                    latest = config.load(create=False)
+                    current = {a['label']:a for a in config.effective_accounts(latest,only_enabled=False)}
+                    for account in config.effective_accounts(cfg,only_enabled=False):
+                        old = current.get(account['label'])
+                        if old and old.get('student_id') == account.get('student_id'):
+                            target = cfg if account.get('_virtual') else account
+                            for key in ('wechat','session_cookie','session_saved_at'):
+                                if key in old: target[key] = copy.deepcopy(old[key])
+                    res = perform(log)
+            except Exception as error:
+                res = service.Result('fail', '操作失败或另一实例正在运行，请检查网络、授权和配置文件权限')
+
             self.queue.put(('__result__', res))
+
+        def perform(log):
+            if action == 'selftest':
+                res = service.selftest(cfg, log)
+            elif action == 'login':
+                res = service.do_login(cfg, log)
+            elif action == 'status':
+                res = service.do_status(cfg, log)
+            elif action == 'wx_test':
+                res = service.do_wechat_test(cfg,log,label=wx_label)
+            elif action == 'checkin':
+                res = service.do_checkin(cfg, log, force=force, dry_run=dry_run, use_reverse=use_reverse)
+            elif action == 'notify_test':
+                target = notify_target
+                ok, note = push.send(target, '推送测试',
+                                     'MoonCheck 桌面端测试消息 %s' %
+                                     datetime.datetime.now().strftime('%H:%M:%S'),
+                                     timeout=cfg.get('timeout') or 15)
+                res = service.Result('ok' if ok else 'fail', note)
+            else:
+                res = service.Result('fail', '未知动作 ' + action)
+            return res
 
         threading.Thread(target=job, daemon=True).start()
 
@@ -686,13 +777,13 @@ class App(object):
                             '需要二次验证',
                             '服务端要求二次验证：浏览器指纹未被信任。\n'
                             '请按 desktop/README.md「获取指纹」一节，为对应账号填入其浏览器指纹后重试。')
-                    if res.kind in ('ok', 'warn'):
-                        reloaded = config.load(create=False)
-                        if reloaded != self.cfg:
-                            self.cfg = reloaded
-                            self.work = copy.deepcopy(reloaded)
-                            self._load_form()
-                            self._log('[..] 会话/结果已自动写回 config.json')
+                    # A failed ticket attempt may still rotate and save tokens.
+                    reloaded = config.load(create=False)
+                    if reloaded != self.cfg:
+                        self.cfg = reloaded
+                        self.work = copy.deepcopy(reloaded)
+                        self._load_form()
+                        self._log('[..] 会话/结果已自动写回 config.json')
                     self.busy = False
                     self._set_buttons_enabled(True)
                     self._refresh_status_line()
@@ -703,6 +794,8 @@ class App(object):
         self.root.after(80, self._drain_queue)
 
     def _log(self, msg):
+        from .privacy import sanitize
+        msg = sanitize(msg, self.work)
         self.text.configure(state='normal')
         self.text.insert('end', '%s %s\n' % (
             datetime.datetime.now().strftime('%H:%M:%S'), msg))
@@ -737,8 +830,18 @@ class App(object):
             self._log('[FAIL] 打开目录失败：%s' % e)
 
     def _set_buttons_enabled(self, enabled):
-        for b in (self.b_save, self.b_checkin):
-            b.configure(state='normal' if enabled else 'disabled')
+        if not enabled:
+            self._disabled_by_job = []
+            def freeze(widget):
+                if isinstance(widget,(ttk.Entry,ttk.Combobox,ttk.Button,ttk.Checkbutton,ttk.Radiobutton,ttk.Spinbox)):
+                    if not widget.instate(['disabled']):
+                        self._disabled_by_job.append(widget);widget.state(['disabled'])
+                for child in widget.winfo_children():freeze(child)
+            freeze(self.root)
+        else:
+            for widget in getattr(self,'_disabled_by_job',[]):
+                if widget.winfo_exists():widget.state(['!disabled'])
+            self._disabled_by_job = []
 
     def _refresh_status_line(self):
         cfg = self.work

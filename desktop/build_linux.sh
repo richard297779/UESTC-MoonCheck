@@ -7,7 +7,7 @@
 #    sudo apt install -y python3-venv python3-tk squashfs-tools
 #    bash build_linux.sh
 #
-#  脚本会在 desktop/.venv 里装 pyinstaller（仅构建期依赖，运行时零依赖）。
+#  脚本会在 desktop/.venv 里装 PyInstaller 和微信加密依赖；单文件产物内含运行依赖。
 #  产物：dist/linux/MoonCheck（chmod +x 后可直接拷贝到任意 x86_64 Linux 运行）
 # ============================================================
 set -euo pipefail

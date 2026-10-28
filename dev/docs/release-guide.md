@@ -1,6 +1,34 @@
+# 电脑端独立发行补充
+
+本轮发布 `desktop-v1.1.0` 预发行版，包含桌面 Windows 程序和电脑 BLE GUI 源码 ZIP。根目录 VERSION / 固件 / APK 仍为 0.7.0，不重新上传、换标或改动既有 v0.7.0 资产；固件 Latest 保持 v0.7.0。电脑端未完成真实账号/GUI BLE 联调，因此使用 Prerelease。
+
+构建和核验流程：
+
+```powershell
+./desktop/build-local.ps1
+python -m unittest discover -s tools/tests -v
+python tools/check_project.py
+python dev/tools/check_privacy.py --source
+# 提交所有本次源码、文档后，重新运行 package_local.py 记录干净 HEAD：
+python desktop/package_local.py
+python dev/tools/package_computer_release.py
+# 在已安装 PyInstaller 的构建环境执行，包含冻结 Python 模块检查：
+python dev/tools/check_privacy.py --frozen desktop/dist/windows/MoonCheck.exe desktop/dist/release/desktop-v1.1.0/MoonCheck-Desktop-1.1.0-windows.zip desktop/dist/release/desktop-v1.1.0/MoonCheck-BLE-Console-1.1.0-source.zip
+```
+
+电脑端包装脚本不上传。产物在 `desktop/dist/release/desktop-v1.1.0/`：两个 ZIP、computer-release-manifest.json、sha256.txt。校验源码提交、ZIP 白名单、内部摘要和构建源文件哈希。Windows EXE 无生产代码签名，Linux 未构建；BLE 工具包为源码，需要自行安装 Python/tkinter/bleak。发布说明及验证边界见[本轮发行说明](computer-release.md)。
+
+发布时先检查 origin、远端 main 和干净 HEAD，使用独立注释标签 desktop-v1.1.0；先建 GitHub 草稿预发行版，上传四资产，核对远端资产名、大小与 SHA-256 后公开，设置 latest=false。不覆盖既有标签或资产。
+
+历史跟踪固件 ZIP 中发现编译路径元数据，未发现完整私钥 PEM；仅有 TLS 解析器内置的 BEGIN 标记。历史二进制保持原始哈希，不纳入本轮资产，也不重写 Git 历史；`--include-historical` 可单独扫描，不能将其表述为已清除历史副本。当前源码与本轮资产单独扫描。
+
+---
+
+以下为固件 / Android 0.7.0 的发行流程与历史记录，命令中的 0.7.0 不适用于电脑端独立标签。
+
 # v0.7.0 发行维护指南
 
-默认发行包含原有两种 ESP32 固件、原生 Android **Debug 签名测试版**、完整发行 ZIP、使用说明、SHA-256 与源码提交清单。旧桌面版 1.0.0 尚不支持微信票据，不重新发行桌面二进制。
+默认发行包含原有两种 ESP32 固件、原生 Android **Debug 签名测试版**、完整发行 ZIP、使用说明、SHA-256 与源码提交清单。桌面 1.1.0 已独立移植微信票据但尚待实测，单独构建，不混入固件发行包。
 
 ## 版本与范围
 

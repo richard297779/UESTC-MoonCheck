@@ -32,8 +32,17 @@
         "on": true,
         "style": 2,
         "url": "https://sctapi.ftqq.com/PUT_SECOND_SENDKEY.send",
-        "accounts": ["A02"]
+        "accounts": [
+          "A02"
+        ]
       }
     ]
+  },
+  "config_schema": 2,
+  "wechat": {
+    "openid": "",
+    "access": "",
+    "refresh": "",
+    "expires_at": 0
   }
 }

@@ -138,6 +138,7 @@ wx test 0
 
 ```powershell
 cd <仓库目录>
+python tools/ble_console.py                 # 打开图形界面；也可双击 tools/ble_console.pyw
 python tools/ble_console.py --list           # 看广播名，格式 WANAN-XXXX
 python tools/ble_console.py --name WANAN-XXXX
 ```

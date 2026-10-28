@@ -6,3 +6,7 @@ __pycache__/
 *.pyc
 config.json
 mooncheck-config*.json
+
+.build-tools/
+.mooncheck.lock
+config.json.lock

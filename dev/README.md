@@ -28,6 +28,8 @@ mooncheck/
 └─ release/             发布产物与发行说明
 ```
 
+桌面 1.1.0 微信链路移植见[实施计划](docs/desktop-port-plan.md)与[桌面说明](../desktop/README.md)。
+
 ## 文档索引
 
 v0.7.0 多板型实现与验收边界见[扩展方案](docs/board-expansion-plan.md)及[板型矩阵](../docs/board-support.md)。APK 新增运行状态与开发者脱敏日志；新增型号未经实际验证。
@@ -125,3 +127,5 @@ v0.7.0 多板型实现与验收边界见[扩展方案](docs/board-expansion-plan
 ## 许可
 
 MIT，见 [LICENSE](../LICENSE)。
+
+电脑端独立发行与隐私范围见[电脑端发行说明](docs/computer-release.md)，打包入口为 `dev/tools/package_computer_release.py`；隐私检查入口为 `dev/tools/check_privacy.py`。
