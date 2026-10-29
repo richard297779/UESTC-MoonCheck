@@ -5,6 +5,7 @@
 #include "account_store.h"
 
 #include <ArduinoJson.h>
+#include <esp_system.h>
 
 #include "logger.h"
 
@@ -44,6 +45,7 @@ Result AccountStore::begin(const char* nvsNamespace) {
     return Result::StorageError;
   }
   m_opened = true;
+  m_revision = esp_random();
 
   m_list.clear();
   if (m_prefs.isKey(kNvsProfiles)) {
@@ -131,13 +133,15 @@ Result AccountStore::addOrUpdate(const CheckinProfile& profile) {
 
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   const int existing = indexOfLabel(profile.label);
+  const auto previous = m_list;
   Result result = Result::Ok;
   if (existing >= 0) {
     // 覆盖：保留已有的打卡结果，避免改密码后误判"今天没打过"
     CheckinProfile& target = m_list[static_cast<size_t>(existing)];
-    const String lastDate = target.lastDate;
-    const bool lastOk = target.lastOk;
-    const String lastMsg = target.lastMsg;
+    const bool sameIdentity=target.studentId==profile.studentId;
+    const String lastDate = sameIdentity?target.lastDate:String();
+    const bool lastOk = sameIdentity&&target.lastOk;
+    const String lastMsg = sameIdentity?target.lastMsg:String();
     target = profile;
     target.lastDate = lastDate;
     target.lastOk = lastOk;
@@ -150,6 +154,7 @@ Result AccountStore::addOrUpdate(const CheckinProfile& profile) {
     }
   }
   if (result == Result::Ok) result = persist();
+  if (result == Result::Ok) ++m_revision; else m_list = previous;
   if (m_mutex) xSemaphoreGive(m_mutex);
 
   if (result == Result::Ok) {
@@ -166,8 +171,10 @@ Result AccountStore::setEnabled(const String& label, bool enabled) {
     if (m_mutex) xSemaphoreGive(m_mutex);
     return Result::NotFound;
   }
+  const bool previous = m_list[static_cast<size_t>(index)].enabled;
   m_list[static_cast<size_t>(index)].enabled = enabled;
   const Result result = persist();
+  if (result == Result::Ok) ++m_revision; else m_list[static_cast<size_t>(index)].enabled = previous;
   if (m_mutex) xSemaphoreGive(m_mutex);
   LOG_I(kTag, "account %s -> %s, enabled=%u/%u", label.c_str(), enabled ? "ON" : "OFF",
         static_cast<unsigned>(enabledCount()), static_cast<unsigned>(m_list.size()));
@@ -185,10 +192,12 @@ size_t AccountStore::enabledCount() const {
 Result AccountStore::remove(const String& label) {
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   const int index = indexOfLabel(label);
+  const auto previous = m_list;
   Result result = Result::NotFound;
   if (index >= 0) {
     m_list.erase(m_list.begin() + index);
     result = persist();
+    if (result == Result::Ok) ++m_revision; else m_list = previous;
   }
   if (m_mutex) xSemaphoreGive(m_mutex);
   if (index >= 0) LOG_W(kTag, "account removed: %s", label.c_str());
@@ -197,9 +206,10 @@ Result AccountStore::remove(const String& label) {
 
 Result AccountStore::clearAll() {
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const auto previous = m_list;
   m_list.clear();
-  Result result = Result::Ok;
-  if (m_opened) m_prefs.remove(kNvsProfiles);
+  Result result = persist();
+  if (result == Result::Ok) ++m_revision; else m_list = previous;
   if (m_mutex) xSemaphoreGive(m_mutex);
   LOG_W(kTag, "all accounts cleared");
   return result;
@@ -259,4 +269,35 @@ String AccountStore::labels() const {
     out += m_list[i].label;
   }
   return out;
+}
+
+Result AccountStore::replaceAt(size_t index, const CheckinProfile& profile) {
+  if (!labelOk(profile.label) || !profile.studentId.length() || !profile.password.length()) return Result::InvalidParam;
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const int collision = indexOfLabel(profile.label);
+  if (index >= m_list.size() || (collision >= 0 && static_cast<size_t>(collision) != index)) {
+    if (m_mutex) xSemaphoreGive(m_mutex);
+    return Result::InvalidParam;
+  }
+  const CheckinProfile previous = m_list[index];
+  m_list[index] = profile;
+  Result result = persist();
+  if (result == Result::Ok) ++m_revision; else m_list[index] = previous;
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  return result;
+}
+
+String AccountStore::toJsonDetails() const {
+  JsonDocument doc;
+  doc["revision"] = m_revision;
+  JsonArray rows = doc["accounts"].to<JsonArray>();
+  for (size_t i=0;i<m_list.size();++i) {
+    const auto& p=m_list[i];
+    JsonObject row=rows.add<JsonObject>();
+    row["slot"]=i; row["label"]=p.label; row["user"]=p.studentId;
+    row["enabled"]=p.enabled; row["passwordSet"]=p.password.length()>0;
+    row["fingerprintSet"]=p.hasFingerprint(); row["lat"]=p.latitude; row["lng"]=p.longitude; row["addr"]=p.address;
+    row["lastDate"]=p.lastDate; row["lastOk"]=p.lastOk; row["lastMsg"]=p.lastMsg;
+  }
+  String out; serializeJson(doc,out); return out;
 }

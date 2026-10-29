@@ -40,7 +40,7 @@ auto on
 
 ### 微信操作票据（当前固件源码）
 
-平台现要求打卡请求携带 `X-Checkin-Ticket`。当前 v0.7.0 固件会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。v0.5.1 已支持票据，但长命令队列存在截断问题；v0.6.0 修复后，`hello.maxCommandBytes` 为 4095（另加一个换行，总计最多 4096 字节）。没有该字段的旧固件按 511 字节 JSON 上限处理。
+平台现要求打卡请求携带 `X-Checkin-Ticket`。当前 v0.8.0 固件会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。v0.5.1 已支持票据，但长命令队列存在截断问题；v0.6.0 修复后，`hello.maxCommandBytes` 为 4095（另加一个换行，总计最多 4096 字节）。没有该字段的旧固件按 511 字节 JSON 上限处理。
 
 在 `ble_console.py` 中可直接使用以下快捷命令：
 
@@ -58,7 +58,7 @@ wx test 0
 | 查看摘要 | `wx status` | `{"op":"wx.status"}` | 仅显示各槽位是否有效及过期时间，不返回凭据明文 |
 | 测试 | `wx test [slot]` | `{"op":"wx.test","slot":0}` | 执行换票链路但不提交打卡；快捷命令默认槽位 0 |
 
-`expiresAt` 为绝对 Unix 时间（秒）。扫码地址和 Cookie 获取位置见[快速开始](quickstart.md#22-准备微信授权凭据)。Cookie 的 `openid`、`accesstoken`、`refreshtoken` 分别填入 `openid`、`access`、`refresh`；`expires_in` 是剩余秒数，须加当前 Unix 时间换算成 `expiresAt`（也可传 `0` 让设备首次使用前刷新）。账号表为空时主账号使用槽位 0；账号表非空时，账号按表内顺序对应槽位 0–5。删除账号会使后续账号位置前移，因此应重新导入受影响槽位的凭据。每个账号必须由本人扫码授权，妥善保管令牌。
+`expiresAt` 为绝对 Unix 时间（秒）。扫码地址和 Cookie 获取位置见[快速开始](quickstart.md#22-准备微信授权凭据)。Cookie 的 `openid`、`accesstoken`、`refreshtoken` 分别填入 `openid`、`access`、`refresh`；`expires_in` 是剩余秒数，须加当前 Unix 时间换算成 `expiresAt`（也可传 `0` 让设备首次使用前刷新）。账号表为空时主账号使用槽位 0；账号表非空时，账号按表内顺序对应槽位 0–5。删除账号会使后续账号位置前移，0.8.0 会先清除全部授权以避免错配，因此保留账号须重新导入授权。每个账号必须由本人扫码授权，妥善保管令牌。
 
 **导入开发板前关闭完成扫码的 QR Connect 页面。** 同一组微信授权凭据应只由一个客户端保活，避免扫码页面或其他程序与设备同时刷新令牌。
 
@@ -251,3 +251,7 @@ wx test 0
 ## v0.7.0 状态字段与日志
 
 `status` 保留既有结构，新增 `runtime` 字节指标与 `net.ssid`（仅联网时返回实际 SSID）。字段定义见[BLE 协议](../dev/docs/ble-protocol.md)。`logs n` 手动回读最近日志，n 在设备端限制为 1–60；敏感行被隐藏，日志仅供受控诊断。Android 入口为控制台 → 运行状态 → 开发者选项。
+
+## 0.8.0 新界面协议
+
+新版 GUI / APK 使用 `account.snapshot` / `account.patch` 和 expectedRevision，实现按序号、标签或完整学号定位并仅更新非空项。CLI 的 `account add` 仍是整条覆盖，留空不是保留旧字段。微信导入携 target / slot / revision，登录、链路、打卡、演练支持 targets 数组。具体字段与汇总结果语义见 [BLE 协议](../dev/docs/ble-protocol.md)，普通用户按[图形界面指南](ble-gui.md)操作即可。

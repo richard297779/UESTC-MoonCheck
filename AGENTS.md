@@ -86,6 +86,15 @@ python tools/check_project.py --release-dir release/v<版本号>
 
 把 `<版本号>` 替换为根目录 `VERSION` 的实际值。正式核验可追加 `--require-clean`，但要求工作区干净、清单来源与当前提交一致；历史发行包不能直接当成新提交产物。
 
+## v0.8.0 补充约定
+
+- 固件 / APK / 电脑 BLE 源码跟随根 VERSION；独立打卡桌面程序继续独立版本。当前 Android versionCode 为 800。
+- account.snapshot 返回完整学号，仅用户界面可显示；诊断仍脱敏。account.patch 只发送非空字段，客户端携 expectedRevision，微信导入同时核对 label / slot；账号删改后不得重用旧映射。
+- 指定账号执行依赖 selected-execution，不得临时修改全局启用开关模拟选择；每人隔离会话、票据、位置，外层成功不能代替逐账号业务成功。
+- 修改账号合并、目标或微信槽位逻辑，运行 `python tools/test_account_patch.py --compiler c++`，或用 --zig；该测试直接编译生产头文件。预取票据也必须使用当前账号归属。
+- firmware/scripts/reproducible_paths.py 在编译阶段移除本机路径，不对已有发行二进制进行字符串替换。
+- 最新发行新增 BLE 源码 ZIP，使用 dev/tools/package_ble_console.py 白名单构建；不可漏掉 ble_dashboard、console_model、二维码模块或 requirements。上传前还需扫描所有新产物并核对源码 ZIP 内清单。
+
 ## 工程约定
 
 - 根目录 `VERSION` 是项目版本与 Android `versionName` 的来源；固件 `FW_VERSION` 与其保持一致，Android `versionCode` 随新版本递增。桌面由 desktop/VERSION 独立维护，并同步 __version__ 与 Windows version_info.txt。

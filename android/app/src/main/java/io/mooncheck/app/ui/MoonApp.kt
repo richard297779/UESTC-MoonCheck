@@ -46,8 +46,14 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
         if (!state.ready) { form = null; confirm = null; developer = false }
     }
     val enabled = state.ready && !state.busy
-    fun execute(title: String, op: String, fields: JsonObject = JsonObject(emptyMap()), timeout: Long = 15000) { vm.repository.execute(title, op, fields, timeout) }
-    val pick: (CommandForm) -> Unit = { form = it }
+    fun execute(title: String, op: String, fields: JsonObject = JsonObject(emptyMap()), timeout: Long = 15000) {
+        if(op in AccountCommands.executionOps) form=CommandForm(title,op,"请选择本次目标账号；每个账号使用自己的会话和位置。",emptyList(),confirm=true,extra=fields)
+        else vm.repository.execute(title, op, fields, timeout)
+    }
+    val pick: (CommandForm) -> Unit = { selected ->
+        if(selected.op in setOf("wx.import","wx.test"))vm.repository.execute("刷新账号映射","account.list")
+        form=if(selected.op in setOf("wx.import","wx.test")) selected.copy(inputs=listOf(Input("_target","目标标签 / 序号","匹配当前设备账号表，自动选择微信槽位",selected.inputs.firstOrNull { it.key=="slot" }?.initial ?: "0"))+selected.inputs.filter { it.key!="slot" }) else selected
+    }
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             CenterAlignedTopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) {
@@ -176,7 +182,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                     2 -> {
                         PageHeading("账号与授权", "每人独立授权，按槽位清晰管理")
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = { pick(Forms.account) }, enabled = enabled) { Icon(Icons.Rounded.Add, null, Modifier.size(18.dp)); Text(" 添加账号") }
+                            Button(onClick = { pick(Forms.accountCreate) }, enabled = enabled) { Icon(Icons.Rounded.Add, null, Modifier.size(18.dp)); Text(" 添加账号") }
                             OutlinedButton(onClick = { execute("刷新账号与授权", "account.list") }, enabled = enabled) { Text("刷新列表") }
                         }
                         if (state.accounts.isEmpty()) Section("${if (state.ready) "单人配置模式" else "连接后读取账号"}") {
@@ -188,15 +194,21 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                         state.accounts.forEach { account ->
                             Section("${account.label}  ·  槽位 ${account.slot}") {
                                 Text(account.user, style = MaterialTheme.typography.bodyMedium)
+                                fun configured(value: Boolean?)=when(value) { true->"已配置";false->"未配置";else->"设备未提供" }
+                                Text("密码：${configured(account.passwordSet)} · 指纹：${configured(account.fingerprintSet)}",style=MaterialTheme.typography.bodySmall)
+                                Text("通知："+(listOfNotNull(if(state.notifyEnabled)"默认通道" else null)+state.channels.filter { it.accounts=="all" || account.label in it.accounts.split(',') }.map { it.label+if(it.enabled)"" else "（停用）" }).joinToString("、").ifEmpty { "未关联启用通道" },style=MaterialTheme.typography.bodySmall)
+                                Text("最近结果：${account.lastResult.trim().ifEmpty { "暂无记录" }}",style=MaterialTheme.typography.bodySmall)
+
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text(if (account.authorized) "已保存微信授权" else "未保存微信授权", Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
-                                    Switch(checked = account.enabled, enabled = enabled, onCheckedChange = { on ->
+                                    Switch(checked = account.enabled, enabled = enabled && !account.primary, onCheckedChange = { on ->
                                         execute(if (on) "启用账号" else "暂停账号", "account.enable", buildJsonObject { put("label", account.label); put("on", on) })
                                     })
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    TextButton(onClick = { pick(Forms.accountEdit.copy(inputs=Forms.accountEdit.inputs.map { if(it.key=="_target")it.copy(initial=account.label) else it })) }, enabled=enabled && !account.primary) { Text("修改") }
                                     OutlinedButton(onClick = { pick(Forms.wx.copy(inputs = Forms.wx.inputs.map { if (it.key == "slot") it.copy(initial = account.slot.toString()) else it })) }, enabled = enabled) { Text("导入授权") }
-                                    TextButton(onClick = { confirm = ConfirmAction("删除 ${account.label}？", "删除后必须重新核对所有账号的微信槽位，应用不会自动移动凭据。") { execute("删除账号", "account.remove", buildJsonObject { put("label", account.label) }) } }, enabled = enabled) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                                    TextButton(onClick = { confirm = ConfirmAction("删除 ${account.label}？", "删除后设备会清除全部微信授权以避免槽位错配，请为保留账号重新导入授权。") { execute("删除账号", "account.remove", buildJsonObject { put("label", account.label) }) } }, enabled = enabled && !account.primary) { Text("删除", color = MaterialTheme.colorScheme.error) }
                                 }
                             }
                         }
@@ -225,10 +237,16 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
             confirm = ConfirmAction("$title？", "此操作会发送到当前选定设备，请确认后继续。") { execute(title, op, fields, 120000) }
         }, { form = null })
         else CommandSheet(form!!, link, state, { selected, values ->
-            val payload = Forms.payload(selected, values)
+            val payload = AccountCommands.payload(selected, values, state)
             val timeout = when (selected.op) { "wifi.set", "wx.test" -> 120000L; "test.chain" -> (values["wait_s"]!!.toLong() + 120) * 1000; else -> 15000L }
-            val send = { vm.repository.execute(selected.title, selected.op, payload, timeout, selected.step) }
-            if (selected.confirm) confirm = ConfirmAction("确认${selected.title}？", "将发送到 ${link.device?.name ?: "当前设备"}。${selected.description}", send) else send()
+            val actualOp=if(selected.op=="account.add")"account.patch" else selected.op
+            val guarded=selected.op in AccountCommands.executionOps || selected.op in setOf("account.add","account.patch","wx.import","wx.test")
+            val capturedRevision=state.accountRevision
+            val send = {
+                if(guarded && vm.repository.state.value.accountRevision!=capturedRevision)vm.repository.notice("账号表已变化，请刷新后重新确认目标")
+                else vm.repository.execute(selected.title, actualOp, payload, if(selected.op in AccountCommands.executionOps) ((values["wait_s"]?.toLongOrNull() ?: 0L)+180L)*(payload["targets"] as? JsonArray).orEmpty().size*1000L+600000L*((payload["targets"] as? JsonArray).orEmpty().size-1).coerceAtLeast(0) else timeout, selected.step)
+            }
+            if (selected.confirm) confirm = ConfirmAction("确认${selected.title}？", "将发送到 ${link.device?.name ?: "当前设备"}。${selected.description}\n目标：${values["_targets"] ?: values["_target"] ?: "新建账号"}", send) else send()
             form = null
         }, { form = null })
     }
@@ -320,7 +338,17 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
 }
 
 @Composable private fun CommandSheet(form: CommandForm, link: LinkState, state: DeviceSnapshot, submit: (CommandForm, Map<String, String>) -> Unit, dismiss: () -> Unit) {
-    val values = remember(form) { mutableStateMapOf<String, String>().apply { form.inputs.forEach { put(it.key, it.initial) } } }
+    val values = remember(form) { mutableStateMapOf<String, String>().apply { form.inputs.forEach { put(it.key, it.initial) };put("_revision",state.accountRevision?.toString().orEmpty());put("slot","0") } }
+    val clearWx: () -> Unit = {
+        listOf("openid", "access", "refresh").forEach { values[it] = "" }
+        values["expiresAt"] = "0"
+    }
+    LaunchedEffect(form, values["_target"], state.accountRevision) {
+        if(form.op in setOf("wx.import","wx.test")) {
+            clearWx()
+            values["slot"]=runCatching { AccountCommands.resolve(state.accounts,values["_target"].orEmpty()).slot.toString() }.getOrDefault("")
+        }
+    }
     var error by remember(form) { mutableStateOf<String?>(null) }
     val activity = LocalActivity.current
     DisposableEffect(Unit) { activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE); onDispose { values.clear(); if (!link.connected) activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) } }
@@ -328,6 +356,18 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             PageHeading(form.title, form.description)
             Text("发送至 ${link.device?.name ?: "未连接"}\n${link.device?.address ?: ""}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            if(form.op in AccountCommands.executionOps) {
+                Text("选择目标账号（可多选；禁用账号需先启用）")
+                state.accounts.forEach { account ->
+                    val labels=values["_targets"].orEmpty().split(',').filter(String::isNotEmpty)
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        Checkbox(checked=account.label in labels,enabled=account.enabled,onCheckedChange={ checked -> values["_targets"]=(if(checked) labels+account.label else labels-account.label).joinToString(",") })
+                        Text("#${account.slot} · ${account.label} · ${account.user}")
+                    }
+                }
+            }
+            if(form.op in setOf("wx.import","wx.test"))Text(if(values["slot"].isNullOrBlank())"尚未匹配唯一账号" else "已匹配微信槽位 ${values["slot"]}")
+            if (form.op == "wx.import" && !values["slot"].isNullOrBlank() && values["_revision"]==state.accountRevision?.toString()) QrAuthorizationPanel(values["slot"].orEmpty(), clearWx) { fields -> values.putAll(fields) }
             form.inputs.forEach { input ->
                 var visible by remember(input.key) { mutableStateOf(false) }
                 if (input.kind == Kind.Choice) {
@@ -352,8 +392,8 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             Button(onClick = {
                 try {
-                    val payload = Forms.payload(form, values)
-                    require(ProtocolCodec.request(Int.MAX_VALUE - 1, form.op, payload).size - 1 <= state.maxCommandBytes) { "当前固件无法接收这么长的配置，请先升级支持长命令的固件。" }
+                    val payload = AccountCommands.payload(form, values, state)
+                    require(ProtocolCodec.request(Int.MAX_VALUE - 1, if(form.op=="account.add")"account.patch" else form.op, payload).size - 1 <= state.maxCommandBytes) { "当前固件无法接收这么长的配置，请先升级支持长命令的固件。" }
                     submit(form, values.toMap()); values.clear()
                 }
                 catch (e: IllegalArgumentException) { error = e.message ?: "请检查输入" }
@@ -373,7 +413,7 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
             ActionRow("通知通道开关", "按标签启用或暂停附加通道", Icons.Rounded.ToggleOn, enabled) { pick(CommandForm("通知通道开关", "notify.enable", "输入已存在的附加通道标签。", listOf(Input("label", "通道标签"), Input("on", "是否启用", initial = "1", kind = Kind.Choice, choices = listOf("1", "0"))), confirm = true)) }
             ActionRow("删除通知通道", "删除一个附加通道", Icons.Rounded.DeleteOutline, enabled) { pick(CommandForm("删除通知通道", "notify.remove", "删除后该通道不再接收推送。", listOf(Input("label", "通道标签")), confirm = true)) }
             ActionRow("重设通道关联", "更新推送关联的账号标签", Icons.Rounded.Link, enabled) { pick(CommandForm("重设通道关联", "notify.link", "all 表示全部事件；多个账号标签用英文逗号分隔。", listOf(Input("label", "通道标签"), Input("accounts", "关联账号", initial = "all")), confirm = true)) }
-            ActionRow("清空账号表", "回到单人配置；需重新核对授权槽位", Icons.Rounded.PersonRemove, enabled) { dismiss(); run("清空账号表", "account.clear", JsonObject(emptyMap())) }
+            ActionRow("清空账号表", "回到单人配置，并清除全部微信授权", Icons.Rounded.PersonRemove, enabled) { dismiss(); run("清空账号表", "account.clear", JsonObject(emptyMap())) }
             ActionRow("恢复出厂设置", "擦除全部配置与凭据", Icons.Rounded.RestartAlt, enabled) { pick(Forms.reset) }
         }
     }

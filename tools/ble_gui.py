@@ -5,16 +5,31 @@ import json
 import queue
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 import ble_console as protocol
 
 
-def display_message(message):
-    """Only retain masked account identifiers, never credential values."""
-    safe = protocol.Console._redact(message)
+def project_version():
+    try:
+        value = (Path(__file__).resolve().parents[1] / 'VERSION').read_text(encoding='ascii').strip()
+        parts = value.split('.')
+        return value if len(parts) == 3 and all(p.isdigit() for p in parts) else '开发版'
+    except (OSError, UnicodeError):
+        return '开发版'
+
+
+def display_message(message, sanitizer=protocol.Console._redact):
+    """Keep full IDs only in explicit account snapshots; logs remain redacted."""
+    safe = sanitizer(message)
     data = message.get("data")
+    if message.get("msg") == "account snapshot" and isinstance(data, dict):
+        for source, target in zip(data.get("accounts", []), safe["data"].get("accounts", [])):
+            target["user"] = str(source.get("user", ""))
+        if isinstance(data.get("primary"), dict):
+            safe["data"]["primary"]["user"] = str(data["primary"].get("user", ""))
     if isinstance(data, list) and message.get("msg") == "accounts":
         for source, target in zip(data, safe["data"]):
             user = str(source.get("user", ""))
@@ -59,7 +74,7 @@ OPERATIONS = {
         ("单人账号", "auth.set", [("user", "学号", "secret", ""), ("pass", "密码", "secret", ""), ("bfp", "浏览器指纹（可空）", "secret", "")], ""),
         ("打卡位置", "loc.set", [("lat", "纬度", "float", ""), ("lng", "经度", "float", ""), ("addr", "地址（可空）", "text", "")], ""),
         ("账号列表", "account.list", [], ""),
-        ("添加或覆盖账号", "account.add", [("label", "标签", "text", ""), ("user", "学号", "secret", ""), ("pass", "密码", "secret", ""), ("bfp", "指纹（可空）", "secret", "")], "同标签账号将被覆盖；位置沿用设备配置。"),
+        ("添加或覆盖账号", "account.add", [("label", "标签", "text", ""), ("user", "学号", "secret", ""), ("pass", "密码", "secret", ""), ("bfp", "指纹（可空）", "secret", ""), ("lat", "账号纬度（可空，需与经度成对填写）", "float", ""), ("lng", "账号经度（可空）", "float", ""), ("addr", "账号地址（可空）", "text", "")], "同标签账号将被覆盖。经纬度都留空时沿用设备当前坐标（覆盖已有账号也如此）；地址可单独填写。"),
         ("启用或禁用账号", "account.enable", [("label", "标签", "text", ""), ("on", "启用", "bool", True)], ""),
         ("删除账号", "account.remove", [("label", "标签", "text", "")], "将删除该账号。"),
         ("清空账号表", "account.clear", [], "将清空账号表；设备将回退到单人账号。"),
@@ -100,6 +115,8 @@ def build_payload(spec, values):
     payload = {"op": spec[1]}
     for key, label, kind, _default in spec[2]:
         value = values[key]
+        if spec[1] == "account.add" and key in ("lat", "lng") and not str(value).strip():
+            continue
         if kind == "int":
             value = int(value)
         elif kind == "float":
@@ -125,6 +142,11 @@ def build_payload(spec, values):
             raise ValueError(f"{key} 应在 {low}–{high} 之间")
     if payload["op"] == "factory.reset":
         payload["confirm"] = "YES"
+    if payload["op"] == "account.add":
+        if ("lat" in payload) != ("lng" in payload):
+            raise ValueError("账号经纬度需要成对填写，或同时留空以沿用设备坐标")
+        if "lat" in payload and (payload["lat"] == 0 or payload["lng"] == 0):
+            raise ValueError("当前固件将零坐标视为未配置，请核对账号位置")
     return payload
 
 
@@ -133,6 +155,8 @@ class Session(protocol.Console):
         super().__init__(client, output, on_message)
         self.waiters = {}
         self.max_bytes = 511
+        self.capabilities = set()
+        self.operations = {}
 
     def abort(self):
         for waiter in self.waiters.values():
@@ -140,35 +164,62 @@ class Session(protocol.Console):
                 waiter.set_exception(ConnectionError("设备断开"))
 
     def _print_json(self, text):
-        super()._print_json(text)
+        callback = self.on_message
+        try:
+            incoming=json.loads(text)
+            if incoming.get("msg")=="account snapshot":
+                data=incoming.get("data",{})
+                for account in data.get("accounts",[])+([data["primary"]] if isinstance(data.get("primary"),dict) else []):
+                    if len(account.get("user",""))>=3:self._secrets.add(account["user"])
+        except (ValueError,AttributeError,TypeError):pass
+        self.on_message = None
+        try:
+            super()._print_json(text)
+        finally:
+            self.on_message = callback
         try:
             message = json.loads(text)
         except ValueError:
             return
         if isinstance(message, dict):
+            if callback:
+                safe = display_message(message, self._safe_message)
+                safe["_operation"] = self.operations.get(message.get("id"), "")
+                callback(safe)
             waiter = self.waiters.get(message.get("id"))
             if waiter and not waiter.done() and message.get("evt") in ("ok", "err", "error"):
                 waiter.set_result(message)
 
     async def request(self, payload, timeout=60):
         payload = dict(payload)
+        def remember(value):
+            if isinstance(value,dict):
+                for key,item in value.items():
+                    if key.lower() in {"pass","password","user","bfp","openid","access","refresh","value","url"} and isinstance(item,str) and len(item)>=3:self._secrets.add(item)
+                    else:remember(item)
+            elif isinstance(value,list):
+                for item in value:remember(item)
+        remember(payload)
         payload["id"] = self.next_id
         request_id = self.next_id
         if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > self.max_bytes:
             raise ValueError(f"超过设备声明的 {self.max_bytes} 字节指令上限")
         waiter = asyncio.get_running_loop().create_future()
         self.waiters[request_id] = waiter
+        self.operations[request_id] = payload["op"]
         try:
             await self.send(payload)
             message = await asyncio.wait_for(waiter, timeout)
             if message.get("evt") != "ok":
                 raise ValueError("设备拒绝此操作，详见脱敏回执")
             if payload["op"] == "hello":
+                self.capabilities = set(message.get("data", {}).get("caps", []))
                 limit = message.get("data", {}).get("maxCommandBytes", 511)
                 self.max_bytes = min(4095, max(1, int(limit)))
             return message
         finally:
             self.waiters.pop(request_id, None)
+            self.operations.pop(request_id, None)
 
 
 class Backend:
@@ -233,9 +284,9 @@ class Backend:
     async def request(self, payload):
         if not self.session or not self.client.is_connected:
             raise RuntimeError("请先连接设备")
-        timeout = max(60, int(payload.get("wait_s", 0)) + 90)
+        timeout = max(90, (int(payload.get("wait_s", 0)) + 180) * len(payload["targets"]) + 600 * max(0, len(payload["targets"])-1)) if "targets" in payload else max(90, int(payload.get("wait_s", 0)) + 90)
         result = await self.session.request(payload, timeout)
-        if payload["op"].endswith((".set", ".add", ".remove", ".enable", ".clear", ".import", ".link")):
+        if payload["op"].endswith((".set", ".add", ".patch", ".remove", ".enable", ".clear", ".import", ".link")) or "targets" in payload:
             try:
                 await self.refresh()
             except Exception:
@@ -245,7 +296,8 @@ class Backend:
     async def refresh(self):
         if not self.session:
             raise RuntimeError("尚未连接")
-        for operation in ("status", "account.list", "wx.status", "notify.status"):
+        account_op = "account.snapshot" if "account-v2" in self.session.capabilities else "account.list"
+        for operation in ("status", account_op, "wx.status", "notify.status"):
             await self.session.request({"op": operation})
 
 
@@ -257,6 +309,7 @@ class Application:
         self.busy = self.connected = self.closing = False
         self.devices = []
         self.snapshot = {}
+        self.qr_dialog = None
         self.accounts = []
         self.developer = tk.BooleanVar(value=False)
         root.title("MoonCheck · 蓝牙控制台")
@@ -371,6 +424,7 @@ class Application:
             self.status.set("请先连接设备，并等待当前操作完成")
 
     def reset_device(self):
+        self.cancel_qr()
         self.snapshot.clear()
         self.accounts = []
         self.account_table.delete(*self.account_table.get_children())
@@ -465,6 +519,7 @@ class Application:
         return str(value) if value is not None else "未提供"
 
     def render(self, state):
+        self.cancel_qr()
         for widget in state["form"].winfo_children():
             widget.destroy()
         spec = state["specs"][state["choice"].current()]
@@ -479,6 +534,13 @@ class Application:
             var = tk.BooleanVar(value=default) if kind == "bool" else tk.StringVar(value=default)
             state["vars"][key] = var
             var.trace_add("write", lambda *_args, s=state: s.update(dirty=True))
+            if spec[1] == "wx.import" and key == "slot":
+                def slot_changed(*_args, s=state):
+                    self.cancel_qr()
+                    for name in ("openid", "access", "refresh"):
+                        if name in s["vars"]:
+                            s["vars"][name].set("")
+                var.trace_add("write", slot_changed)
             ttk.Label(state["form"], text=label).grid(row=row, column=0, sticky="w", padx=(0, 15), pady=3)
             if kind == "bool":
                 widget = ttk.Checkbutton(state["form"], variable=var)
@@ -487,7 +549,42 @@ class Application:
             widget.grid(row=row, column=1, sticky="ew", pady=3)
         state["form"].columnconfigure(1, weight=1)
         ttk.Button(state["form"], text="执行 / 保存", command=lambda: self.send_form(state)).grid(row=len(spec[2])+1, column=1, sticky="e", pady=8)
+        if spec[1] == "wx.import":
+            ttk.Button(state["form"], text="微信扫码获取授权…", command=lambda: self.start_qr(state)).grid(row=len(spec[2])+1, column=0, sticky="w", pady=8)
         self.select_account()
+
+    def cancel_qr(self):
+        if self.qr_dialog and not self.qr_dialog.closed:
+            self.qr_dialog.close()
+        self.qr_dialog = None
+
+    def start_qr(self, state):
+        if not self.connected or self.busy:
+            messagebox.showinfo("请先连接", "请先连接并等待当前操作完成。")
+            return
+        try:
+            slot = str(int(state["vars"]["slot"].get()))
+            if not 0 <= int(slot) <= 5:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("槽位无效", "请选择 0–5 的槽位")
+            return
+        self.cancel_qr()
+        state["vars"]["slot"].set(slot)
+        def receive(fields):
+            if not self.connected or state["specs"][state["choice"].current()][1] != "wx.import" or state["vars"]["slot"].get() != slot:
+                return
+            for key, value in fields.items():
+                state["vars"][key].set(value)
+            self.status.set("微信授权已填入；请核对槽位后点击执行 / 保存")
+        try:
+            from qr_dialog import QrDialog
+            self.qr_dialog = QrDialog(self.root, slot, receive)
+            for key in ("openid", "access", "refresh"):
+                state["vars"][key].set("")
+            state["vars"]["expiresAt"].set("0")
+        except ImportError:
+            messagebox.showerror("需要图片依赖", "扫码界面需要 Pillow：\npython -m pip install -r tools/requirements-ble.txt\n仍可手动填写授权。")
 
     def send_form(self, state):
         if self.busy or not self.connected:
@@ -618,13 +715,15 @@ class Application:
 
     def help(self):
         window = tk.Toplevel(self.root)
-        window.title("使用帮助")
+        window.title(f"MoonCheck {project_version()} · 使用帮助")
         text = ScrolledText(window, width=90, height=30, wrap="word")
         text.pack(fill="both", expand=True)
         text.insert("1.0", "启动：安装 Python 3.10+（含 tkinter）与 bleak，然后双击 ble_console.pyw。\n"
                     "1. 关闭手机 APK 等 BLE 连接，打开电脑蓝牙；扫描并核对设备地址后连接。\n"
-                    "2. 先配置 Wi-Fi、账号与坐标，再导入账号本人微信授权；按账号顺序选择槽位。\n"
-                    "3. 查看状态/前置体检/授权状态，按需测试取票。真实打卡和通知会先确认。\n"
+                    "2. 先配置 Wi-Fi、账号与坐标，再导入账号本人微信授权；在查询与配置中按标签或序号匹配目标。\n"
+                    "3. 设备概览与账号列表用表格展示；启用列可直接勾选。所有操作在查询与配置中选择。\n"
+                    "   修改账号留空保留原值；新建须填标签、学号、密码、指纹。登录和打卡请勾选目标账号。\n"
+                    "   完整回执仅在开发者选项开启后显示。真实打卡和通知会先确认。\n"
                     "4. 等待设备回执；超时结果不确定，请查询状态，切勿盲目重复提交。\n"
                     "5. 页面字段不保存；密码及令牌发送后清空。回执脱敏，但设备自由文本日志仍可能含个人信息，请勿直接分享。\n"
                     "6. 连接失败：关闭其他 BLE 客户端，在系统蓝牙设置删除旧配对，再开关蓝牙重试。\n"
@@ -634,6 +733,7 @@ class Application:
         text.configure(state="disabled")
 
     def close(self):
+        self.cancel_qr()
         self.closing = True
         if getattr(self, "future", None):
             self.future.cancel()
@@ -649,7 +749,8 @@ class Application:
 
 def launch():
     root = tk.Tk()
-    Application(root)
+    from ble_dashboard import Dashboard
+    Dashboard(root)
     if protocol.BleakClient is None:
         messagebox.showwarning("需要安装蓝牙依赖", "请打开终端执行：\npython -m pip install -r tools/requirements-ble.txt\n\n安装后重新启动。")
     root.mainloop()

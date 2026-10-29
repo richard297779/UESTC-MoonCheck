@@ -91,7 +91,7 @@ int main() {
     # Reuse the actual production-generated reply for Android framing tests.
     resources = ROOT / "android/app/src/test/resources"
     resources.mkdir(exist_ok=True)
-    (resources / "firmware-status.json").write_text(json.dumps(fixtures[1], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (resources / "firmware-status.json").write_text(json.dumps(fixtures[1], ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print("PASS: 3 production status fixtures; legacy bug reproduced/rejected; fixed replies parsed by ArduinoJson and Python")
 
 

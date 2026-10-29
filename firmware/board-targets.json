@@ -18,7 +18,7 @@
       "ledRgb": true,
       "usbMode": "uart",
       "status": "baseline",
-      "physicalValidation": "v0.7.0 pending; user can test this model",
+      "physicalValidation": "v0.8.0 basic functions accepted by user; per-board coverage pending",
       "defaultRelease": true
     },
     {
@@ -38,7 +38,7 @@
       "ledRgb": false,
       "usbMode": "uart",
       "status": "baseline",
-      "physicalValidation": "v0.7.0 pending; user can test this model",
+      "physicalValidation": "v0.8.0 basic functions accepted by user; per-board coverage pending",
       "defaultRelease": true
     },
     {

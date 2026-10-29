@@ -1,5 +1,7 @@
 package io.mooncheck.app.protocol
 
+import io.mooncheck.app.BuildConfig
+
 import java.util.Base64
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
@@ -20,7 +22,7 @@ class ProtocolCodecTest {
             chunk(index, pieces.size, piece).asList().chunked(17).forEach { packet -> decoded += assembler.feed(packet.toByteArray()) }
         }
         assertEquals(expected, decoded.single())
-        assertEquals("0.7.0", decoded.single().obj("data").text("fw"))
+        assertEquals(BuildConfig.VERSION_NAME, decoded.single().obj("data").text("fw"))
         assertEquals(220000L, decoded.single().obj("data").obj("runtime")["heapPeakUsedBytes"]!!.jsonPrimitive.long)
         assertTrue(decoded.single().obj("data").obj("net").text("ssid").contains("宿舍"))
     }

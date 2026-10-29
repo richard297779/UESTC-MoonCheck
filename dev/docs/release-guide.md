@@ -1,3 +1,55 @@
+# v0.8.0 当前发行指南
+
+固件 / Android / 电脑 BLE 源码统一为 0.8.0，Android versionCode 800、BLE 协议 1。独立打卡桌面程序仍为 1.1.0，不重新发布其 EXE 或旧标签。用户在 2026-10-29 确认“基本功能已查验无误”，授权 Latest；具体逐设备、逐项扫码和长期运行明细未提供。
+
+## 构建与检查
+
+```powershell
+python tools/test_account_patch.py --compiler c++
+python tools/test_firmware_status.py --compiler c++
+./android/build-local.ps1
+pio run -d firmware -e esp32-s3-devkitc-1 -e esp32-wroom-32 -e esp32-wrover-4mb -e esp32-s3-n8 -e esp32-s3-n8r8 -e esp32-c3-devkitm-1
+python tools/board_targets.py --validate-builds --include-experimental
+python -m unittest discover -s tools/tests -v
+python -m unittest discover -s desktop/tests -v
+python tools/check_project.py
+python dev/tools/check_privacy.py --source
+```
+
+原生测试需要 C++17 / ArduinoJson；无系统编译器时使用 `--zig <本地路径>`。桌面测试依赖 desktop/requirements.txt 的 PyCryptodome；不要把缺依赖误报为通过。源码隐私检查保留历史二进制原始哈希；新固件、APK、ZIP 还需分别扫描。构建脚本采用 GCC 路径映射，去除本机用户名与编译目录，不修改历史产物。
+
+## 打包与版本说明
+
+先更新 VERSION、FW_VERSION、Android versionCode、用户 / 开发者指南、支持矩阵及 `release/v0.8.0/CHANGELOG.md`。该 CHANGELOG 是源码维护的发行说明，打包脚本会将其并入发布 notes，不再复用 0.7.0 文案。
+
+```powershell
+./dev/tools/make_release.ps1 -NoUpload -IncludeExperimental -ValidationNote "2026-10-29 用户确认基本功能；未提供逐设备明细，四实验目标未经实机验证"
+python tools/check_project.py --release-dir release/v0.8.0
+```
+
+六目标完整发行含 **18 个上传资产**：12 个板型 merged/full、Android APK、BLE 源码 ZIP、PACKAGE、manifest、整包 ZIP、sha256。默认不带 IncludeExperimental 仍只打包原有两目标。
+
+电脑源码 ZIP `MoonCheck-0.8.0-ble-console-source.zip` 按白名单包含入口、四栏目界面、数据模型、扫码依赖、requirements、LICENSE、VERSION、使用说明和内部清单。无需同时重建独立桌面 EXE。`package_ble_console.py` 验证精确文件集、语法和逐文件摘要；总清单也绑定同一源码提交。
+
+APK 仍为 Debug 签名、minSdk 26 / targetSdk 35。核对内部版本和签名，并与上一版证书比较；不擅自更换本地签名。新账号管理需固件 account-v2 / selected-execution，建议同时升级固件、APK 和 BLE 源码。
+
+## 提交与 Latest 发布
+
+源码、文档及原型图提交后工作区须干净，再按同一 HEAD 重打包；二进制、SDK、日志及密钥不进入 Git。推送 main 后执行：
+
+```powershell
+python tools/check_project.py --release-dir release/v0.8.0 --require-clean
+./dev/tools/make_release.ps1 -Upload -IncludeExperimental -ValidationNote "2026-10-29 用户确认基本功能；未提供逐设备明细，四实验目标未经实机验证" -Repo richard297779/UESTC-MoonCheck
+```
+
+脚本验证 origin、远端 main、HEAD 和注释标签，先建草稿上传，逐项核对 GitHub 的文件名 / 大小 / SHA-256 后公开，并设为 Latest。网络中断保留草稿；恢复前先查标签和已有资产，禁止移动旧标签或盲目覆盖。结束后再次读取 releases/latest 和远端 main，核对 v0.8.0、18 个资产与干净工作区。
+
+同板型且分区不变时只刷 full.zip 的 firmware.bin 到 0x10000；merged.bin 从 0x0 刷入会清配置。四个实验板型仍须保留未经实机验证声明及反馈入口。
+
+---
+
+以下是此前发行的历史流程与验收记录，旧版本号和下载名不适用于当前发行。
+
 # 电脑端独立发行补充
 
 本轮发布 `desktop-v1.1.0` 预发行版，包含桌面 Windows 程序和电脑 BLE GUI 源码 ZIP。根目录 VERSION / 固件 / APK 仍为 0.7.0，不重新上传、换标或改动既有 v0.7.0 资产；固件 Latest 保持 v0.7.0。电脑端未完成真实账号/GUI BLE 联调，因此使用 Prerelease。

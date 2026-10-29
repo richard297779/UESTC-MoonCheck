@@ -137,7 +137,11 @@ try {
         $rows += "| $([IO.Path]::GetFileName($apk)) | Android 8+ BLE 控制端；Debug 签名测试版 |"
         $androidMetadata = @{ version=$ver; versionCode=$versionCode; package='io.mooncheck.app'; buildType='debug'; minSdk=26; targetSdk=35 }
     }
-    Write-Host '桌面 1.1.0 独立构建和验收，不随本次固件发行重新打包。'
+    $bleSource = Join-Path $Rel "MoonCheck-$ver-ble-console-source.zip"
+    Native 'python' @('dev/tools/package_ble_console.py','--output',$bleSource,'--version',$ver) | ForEach-Object { Write-Host $_ }
+    $assets += $bleSource
+    $rows += "| $([IO.Path]::GetFileName($bleSource)) | 电脑 BLE 图形控制台源码；需 Python/tkinter 与 requirements-ble.txt |"
+    Write-Host '独立打卡桌面程序保持独立版本；本次包含电脑 BLE 控制台源码。'
     $guide = Join-Path $Rel 'PACKAGE.md'
     @(
         "# MoonCheck $ver 发行包",'',
@@ -151,14 +155,16 @@ try {
         ('所选板型：' + (($targets | ForEach-Object { $_.Key + ' [' + $_.Profile.physicalValidation + ']' }) -join '；')),
         '仅在本人受控的近距离环境配置；固件当前未提供 BLE 配对加密或应用鉴权。',
         '同一 Debug 签名可覆盖升级；签名不同需卸载旧测试版。凭据不保存在手机，设备配置保留。',
-        '桌面 1.1.0 有独立微信票据实现，本固件发行包不包含桌面程序。',
+        '电脑：解压 ble-console-source.zip，按其中 PACKAGE.md 安装 Python 依赖，双击 tools/ble_console.pyw。',
+        '新界面账号合并 / 微信目标匹配 / 指定账号执行需配套本版固件，旧 v0.7.0 不具备这些能力。',
+        '独立打卡桌面程序不包含在本包，仍使用 desktop-v1.1.0 独立预发行。',
         ('完整指南：https://github.com/' + $Repo + '/blob/' + $tag + '/docs/quickstart.md'),
         '核验：manifest 中列出内部各文件的 SHA-256，GitHub 单独资产 sha256.txt 还包含整包 ZIP 的摘要。'
     ) | Set-Content -LiteralPath $guide -Encoding UTF8
     $assets += $guide
     $manifest = [ordered]@{
         schemaVersion=2; toolchain=@{platform='espressif32 7.1.3';arduino='2.0.17';nimble='2.5.1';arduinoJson='7.4.3'}; version=$ver; repository=$Repo; sourceCommit=$commit; sourceDirty=$sourceDirty; firmwareProtocol=1; maxCommandBytes=4095;
-        android=$androidMetadata; boards=@($targets | ForEach-Object { $_.Key });
+        android=$androidMetadata; bleConsole=@{version=$ver; file=[IO.Path]::GetFileName($bleSource); firmwareProtocol=1; requiredCapabilities=@("account-v2","selected-execution")}; boards=@($targets | ForEach-Object { $_.Key });
         boardProfiles=@($targets | ForEach-Object {
             $p = $_.Profile
             $m = Get-Content -LiteralPath (Join-Path $Base ('firmware/.pio/build/' + $_.Env + '/board-build.json')) -Raw | ConvertFrom-Json
@@ -178,22 +184,19 @@ try {
     $shaFile = Join-Path $Rel 'sha256.txt'
     $assets | Sort-Object | ForEach-Object { (Digest $_) + '  ' + [IO.Path]::GetFileName($_) } | Set-Content -LiteralPath $shaFile -Encoding ASCII
     $notesFile = Join-Path $Rel "notes-$ver.md"
+    $changeLog = Join-Path $Rel 'CHANGELOG.md'
+    $summary = if (Test-Path -LiteralPath $changeLog) { Get-Content -LiteralPath $changeLog -Raw -Encoding UTF8 } else { "# MoonCheck $ver" }
     $notes = @(
-        "# MoonCheck $ver：多板型与运行状态",'',
-        '本版新增多板型构建、APK 运行状态（网络名、内存峰值、PSRAM）及脱敏开发者日志。',
-        '修复状态 JSON 嵌套序列化覆盖前缀导致 APK 连接报回执不完整；已有用户更新固件即可，APK 无需重装。',
-        '仅 S3-N16R8 与 WROOM-32 可由维护者实测；其余四种新增目标未经实机验证，欢迎提供脱敏反馈。',
+        $summary,'',
         ('联调记录：' + $(if ($ValidationNote) { $ValidationNote } else { '见 docs/project-health.md；不推断逐板型兼容性。' })),
-        '新增板型目录、单核适配、分区与芯片校验；继续保持协议 1 和 maxCommandBytes=4095。',
-        '运行指标由设备分配器提供，开机后重新统计；日志仅当前连接保留，不持久化或导出。',
-        '实验板型须显式选择；C6 与未明确硬件版本的 SuperMini 暂不提供产物。',
+        'S3-N16R8 与 WROOM-32 为原有目标；其他四目标未经实机验证，欢迎提供脱敏反馈。',
         '', '## 下载选择', '', '| 文件 | 用途 |','| --- | --- |', ($rows -join "`n"),
-        "| MoonCheck-$ver-release.zip | 整套资产：所选板型固件、APK、使用说明与清单 |",'',
+        "| MoonCheck-$ver-release.zip | 整套资产：所选板型固件、APK、电脑 BLE 控制台源码、使用说明与清单 |",'',
         '首次刷固件：对应 merged.bin 刷 0x0，会清空已有配置。同分区升级：full.zip 内 firmware.bin 只刷 0x10000。',
         'APK 为 Debug 签名测试版，支持 Android 8+；不会替代 ESP32，手机不需要常驻。',
         '功能联调验收状态见 docs/project-health.md；完整兼容矩阵和正式签名发布需独立核验。',
         '当前 BLE 配置链路未配置配对/加密/设备鉴权，请在本人受控的近距离环境使用。',
-        '桌面 1.1.0 独立构建，本固件发行不重新打包桌面二进制。', '',
+        '电脑 BLE 控制台源码 ZIP 可单独下载；独立打卡桌面程序不在本发行范围。', '',
         '## 构建与溯源', "- 源码提交：$commit", "- 固件与 APK：$ver；BLE 协议 1",
         '- SHA-256：见 sha256.txt；ZIP 内清单见 release-manifest.json。',
         '- 验证结果：见 docs/project-health.md；应用说明见 android/README.md。',
@@ -216,7 +219,7 @@ try {
         $origin = (Native 'git' @('remote','get-url','origin') | Select-Object -Last 1).Trim()
         if ($origin -notmatch ('github\.com[:/]' + [regex]::Escape($Repo) + '(\.git)?$')) { throw 'origin 与 -Repo 不匹配。' }
         $null = Native 'git' @('push','origin',$tagRef)
-        $ghArgs = @('release','create',$tag,'-R',$Repo,'--verify-tag','--target',$commit,'--draft','--title',"MoonCheck $ver（多板型固件 + Android 控制端）",'--notes-file',$notesFile)
+        $ghArgs = @('release','create',$tag,'-R',$Repo,'--verify-tag','--target',$commit,'--draft','--title',"MoonCheck $ver（固件 + Android + 电脑 BLE 控制台）",'--notes-file',$notesFile)
         if ($Prerelease) { $ghArgs += '--prerelease' }
         $ghArgs += $assets + @($shaFile)
         Native $gh $ghArgs | ForEach-Object { Write-Host $_ }

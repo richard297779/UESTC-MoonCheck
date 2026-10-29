@@ -1,8 +1,8 @@
-# v0.7.0 板型支持与验证反馈
+# v0.8.0 板型支持与验证反馈
 
-更新日期：2026-10-27。发行版本为 **0.7.0**，Android versionCode **700**，协议仍为 **1**。本版修复联调已于 2026-10-27 获用户“实测可行”确认，发布为 v0.7.0 Latest；用户未指明本次具体板型，不补造逐板型记录。
+更新日期：2026-10-29。固件 / Android 为 **0.8.0**、versionCode **800**、协议 **1**。用户确认“基本功能已查验无误”并授权 Latest；未提供逐板型、手机和逐项流程明细，不补造测试记录。
 
-维护者只能实测 **ESP32-S3-N16R8** 和 **ESP-WROOM-32**。本次修正版实测确认独立于历史 v0.6.0 记录。其余型号均声明 **未经实际验证**；编译通过仅说明当前工具链可生成产物。
+维护者只能实测 **ESP32-S3-N16R8** 和 **ESP-WROOM-32**。其余四型号均 **未经实际验证**；编译通过仅说明当前工具链可生成产物。欢迎验证者向开发者反馈。
 
 | 发行板型 ID | PlatformIO 环境 | 硬件规格 | 状态 |
 | --- | --- | --- | --- |
@@ -26,12 +26,12 @@ pio run -d firmware -e esp32-s3-devkitc-1 -e esp32-wroom-32 -e esp32-wrover-4mb 
 python tools/board_targets.py --validate-builds --include-experimental
 ./android/build-local.ps1
 ./dev/tools/make_release.ps1 -NoUpload -IncludeExperimental
-python tools/check_project.py --release-dir release/v0.7.0
+python tools/check_project.py --release-dir release/v0.8.0
 ```
 
 默认打包不带 `-IncludeExperimental` 时，只选原有 S3-N16R8/WROOM-32。`-Only c3-devkitm-1-4mb` 可单独选择实验目标；旧 `-Only s3` / `wroom32` 仍只选择原有对应目标。
 
-每个目标独立输出 `wanan-0.7.0-<板型ID>-merged.bin` 与 `…-full.zip`。APK 通用一份，不按板型拆分。目录 `firmware/board-targets.json` 与构建生成 `board-build.json` 交叉核对硬件配置；打包时检查实际镜像芯片、分区范围、OTA 槽容量和烧录偏移。
+每个目标独立输出 `wanan-0.8.0-<板型ID>-merged.bin` 与 `…-full.zip`。APK 通用一份，不按板型拆分。目录 `firmware/board-targets.json` 与构建生成 `board-build.json` 交叉核对硬件配置；打包时检查实际镜像芯片、分区范围、OTA 槽容量和烧录偏移。
 
 首次安装 merged 镜像从 `0x0` 刷入，会清空设备配置。full.zip 内含分开的镜像及本目标的 `FLASH.txt`；同分区升级可只刷 app，但分区变化、其他固件迁移均须重新核对。不要混用其他板型的 bootloader 或分区表。
 

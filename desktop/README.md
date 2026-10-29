@@ -2,7 +2,7 @@
 
 Windows / Linux 原生桌面程序，CLI 与 tkinter 图形界面共用业务逻辑。电脑独立执行 CAS 登录、门户预热、微信授权刷新、MMTLS 获取小程序 code、平台取票、提交与结果复查，**无需 ESP32**。
 
-1.1.0 已完成代码移植、离线回归及 Windows 打包；尚未用真实桌面账号验证取票/打卡，不能沿用固件或 APK 的实测结论。固件和 Android 当前仍为独立的 0.7.0，已有 GitHub 发行不变。电脑端以 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 独立提供 Windows ZIP，并附带电脑 BLE GUI 源码包。桌面 1.0.0 不支持平台微信票据要求，请升级。
+1.1.0 已完成代码移植、离线回归及 Windows 打包；尚未用真实桌面账号验证取票/打卡，不能沿用固件或 APK 的实测结论。固件和 Android 当前为独立的 0.8.0；本目录程序仍保持 1.1.0，不因 BLE 控制台更新而换标。电脑端以 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 独立提供 Windows ZIP及当时的旧 BLE 源码包；最新 BLE 界面请从 [v0.8.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载。桌面 1.0.0 不支持平台微信票据要求，请升级。
 
 ## 使用前准备
 

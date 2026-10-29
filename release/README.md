@@ -13,12 +13,14 @@ release/
 ├─ v0.5.1/                     固件、原说明与 sha256.txt
 │  └─ extracted/               该版本的历史解压副本
 ├─ v0.6.0/                     已发布固件、APK、清单及整包
-├─ v0.7.0/                     Latest 固件、APK、清单及整包
+├─ v0.7.0/                     历史已发布固件、APK、清单及整包
 │  ├─ CHANGELOG.md              源码维护的本版变化说明
 │  └─ notes-0.7.0.md            打包脚本生成的发布草稿
+├─ v0.8.0/                     Latest 固件、APK、BLE 源码、清单及整包
 └─ .staging/v<版本号>/          打包中间目录，非发行资产
 ```
 
+- [v0.8.0 变化与验收边界](v0.8.0/CHANGELOG.md)：用户确认基本功能，含新版电脑 BLE 中控，四实验目标仍未实测。
 - [v0.7.0 变化与验收边界](v0.7.0/CHANGELOG.md)：用户确认修正版实测可行，其他四种新增板型未经实际验证。
 - [v0.5.0 原版本说明](v0.5.0/notes-0.5.0.md)、[v0.4.0 原版本说明](v0.4.0/notes-0.4.0.md)：保留历史内容，不代表当前兼容性。
 - [发行维护指南](../dev/docs/release-guide.md)：构建、打包、核验和上传。
@@ -36,4 +38,4 @@ release/
 
 ## 独立电脑端预发行版
 
-[desktop-v1.1.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供桌面 Windows ZIP 和 BLE GUI 源码 ZIP，尚待实机联调。本地产物位于被忽略的 `desktop/dist/release/desktop-v1.1.0/`，不混入上述固件目录。详见[发行说明](../dev/docs/computer-release.md)。
+[desktop-v1.1.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供独立桌面 Windows ZIP 和当时的旧 BLE GUI 源码 ZIP；独立桌面账号链路仍待实测，最新 BLE 界面请使用 v0.8.0。本地产物位于被忽略的 `desktop/dist/release/desktop-v1.1.0/`，不混入上述固件目录。详见[发行说明](../dev/docs/computer-release.md)。

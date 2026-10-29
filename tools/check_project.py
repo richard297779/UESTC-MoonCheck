@@ -108,6 +108,12 @@ def check_package(directory, require_clean=False):
         apk = directory / f"MoonCheck-{version}-android-debug.apk"
         with zipfile.ZipFile(apk) as archive:
             assert {"AndroidManifest.xml", "classes.dex"}.issubset(archive.namelist()), "APK is missing its manifest or executable code"
+    if manifest.get("bleConsole") is not None:
+        sys.path.insert(0, str(ROOT / "dev/tools"))
+        from package_ble_console import validate_archive
+        ble = manifest["bleConsole"]
+        assert ble["version"] == version and ble["file"] in expected, "Missing/wrong BLE console asset"
+        validate_archive(directory / ble["file"], version, manifest["sourceCommit"], manifest["sourceDirty"])
     for board in manifest["boards"]:
         name = f"wanan-{version}-{board}"
         with zipfile.ZipFile(directory / f"{name}-full.zip") as archive:

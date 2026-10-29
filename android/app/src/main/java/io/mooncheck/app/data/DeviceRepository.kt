@@ -9,9 +9,10 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.*
 
-data class Account(val label: String, val user: String, val enabled: Boolean, val slot: Int, val authorized: Boolean)
+data class Account(val label: String, val user: String, val enabled: Boolean, val slot: Int, val authorized: Boolean, val passwordSet: Boolean? = null, val fingerprintSet: Boolean? = null, val address: String = "", val latitude: Double? = null, val longitude: Double? = null, val lastResult: String = "", val primary: Boolean = false)
 data class NotifyChannel(val label: String, val enabled: Boolean, val accounts: String)
 data class DeviceSnapshot(
+    val capabilities: Set<String> = emptySet(), val accountRevision: Long? = null,
     val ready: Boolean = false, val firmware: String = "—", val mac: String = "—", val maxCommandBytes: Int = 511,
     val runtime: RuntimeStatus = RuntimeStatus(), val deviceLogs: List<String> = emptyList(),
     val logDropped: Long = 0, val statusReadAt: Long = 0,
@@ -45,7 +46,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
         transport.onDisconnect = {
             generation++; assembler.reset()
             pending?.second?.completeExceptionally(IllegalStateException("连接已断开，操作结果未知")); pending = null
-            mutable.update { it.copy(ready = false, configured = emptySet(), slots = emptySet(), accounts = emptyList(), wifiConnected = false, runtime = RuntimeStatus(), deviceLogs = emptyList(), logDropped = 0, statusReadAt = 0, wifi = "未连接") }
+            mutable.update { it.copy(ready = false, configured = emptySet(), slots = emptySet(), accounts = emptyList(), accountRevision = null, capabilities = emptySet(), wifiConnected = false, runtime = RuntimeStatus(), deviceLogs = emptyList(), logDropped = 0, statusReadAt = 0, wifi = "未连接") }
         }
         expiry = scope.launch {
             while (isActive) {
@@ -62,7 +63,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
             val stage = frame.text("stage")
             val known = mapOf("chain" to "链路检查", "probe" to "设备体检", "checkin" to "打卡任务", "wx" to "微信取票")
             val summary = when (event) {
-                "progress" -> "${known[stage] ?: "设备任务"}正在处理"
+                "progress" -> "${frame.text("account","")} ${known[stage] ?: "设备任务"}正在处理"
                 "alert" -> "设备报告提醒，请检查授权或任务状态"
                 else -> "设备任务有新结果，请刷新状态确认"
             }
@@ -119,7 +120,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
                 val info = request("hello").obj("data")
                 check((info["proto"] as? JsonPrimitive)?.intOrNull == 1 && info.text("fw") != "—" && info.text("btMac") != "—") { "设备协议不受支持，已停止控制" }
                 val maxCommand = (info["maxCommandBytes"] as? JsonPrimitive)?.intOrNull?.coerceIn(1, 4095) ?: 511
-                mutable.update { it.copy(firmware = info.text("fw"), mac = info.text("btMac"), maxCommandBytes = maxCommand) }
+                mutable.update { it.copy(firmware = info.text("fw"), mac = info.text("btMac"), maxCommandBytes = maxCommand, capabilities = (info["caps"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }?.toSet().orEmpty()) }
                 refreshInternal()
                 mutable.update { it.copy(ready = true, message = "设备已连接，可以开始配置或控制", error = false) }
                 transport.ready()
@@ -146,7 +147,8 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
             var acknowledged = false
             try {
                 val logSession = logsGeneration
-                val response = request(op, fields, timeout)
+                val checkedFields = if (op in setOf("account.enable", "account.remove", "account.clear") && mutable.value.accountRevision!=null && "expectedRevision" !in fields) buildJsonObject { fields.forEach { (key,value)->put(key,value) }; put("expectedRevision", mutable.value.accountRevision!!) } else fields
+                val response = request(op, checkedFields, timeout)
                 acknowledged = true
                 when (op) {
                     "status" -> applyStatus(response.obj("data"))
@@ -163,11 +165,18 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
                         mutable.update { it.copy(networks = names) }
                     }
                     "factory.reset", "reboot" -> { transport.disconnect("设备正在重启，请重新扫描连接") }
-                    "account.add", "account.remove", "account.clear", "account.enable", "wx.import" -> accountsInternal()
+                    "account.patch", "account.add", "account.remove", "account.clear", "account.enable", "wx.import" -> accountsInternal()
                 }
                 if (op.startsWith("notify.")) notificationsInternal()
                 if (savedStep != null) mutable.update { it.copy(configured = it.configured + savedStep) }
-                val detail = when (op) {
+                val selectedRows=if("targets" in fields) response.obj("data")["accounts"] as? JsonArray else null
+                val selectedFailed=selectedRows?.any { !(it as? JsonObject)?.flag("ok").let { value->value==true } } ?: false
+                val detail = if(selectedRows!=null) "$title · 逐账号结果\n"+selectedRows.joinToString("\n") { entry ->
+                    val row=entry as? JsonObject ?: JsonObject(emptyMap())
+                    val result=if(row.text("status")=="skipped")"跳过" else if(row.flag("ok"))"通过" else "未通过"
+                    val reason=LogPrivacy.sanitize(row.text("msg","")).joinToString(" ").take(160)
+                    "${row.text("label")} · $result · $reason"
+                } else when (op) {
                     "test.http" -> {
                         val status = (response.obj("data")["status"] as? JsonPrimitive)?.intOrNull
                         if (status == 204) "网络检查返回 HTTP 204，设备网络已放行。"
@@ -179,7 +188,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
                     "wifi.scan" -> "WiFi 扫描完成，可在配置页选择网络。"
                     else -> "$title · 设备已确认完成"
                 }
-                mutable.update { it.copy(message = detail, error = false, events = (listOf(detail) + it.events).take(20)) }
+                mutable.update { it.copy(message = detail, error = selectedFailed, events = (listOf(detail) + it.events).take(20)) }
                 done()
                 if (op.endsWith(".set") || op in setOf("test.checkin", "test.multi")) {
                     try { refreshInternal() } catch (_: Exception) {
@@ -206,14 +215,24 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
         mutable.update { it.copy(notifyEnabled = data.flag("on"), channels = channels) }
     }
     private suspend fun accountsInternal() {
-        val accounts = request("account.list")["data"] as? JsonArray ?: JsonArray(emptyList())
+        val v2="account-v2" in mutable.value.capabilities
+        val snapshot=if(v2) request("account.snapshot").obj("data") else JsonObject(emptyMap())
+        val accounts: JsonArray = if(v2) {
+            (snapshot["accounts"] as? JsonArray)?.takeIf { it.isNotEmpty() }
+                ?: (snapshot["primary"] as? JsonObject)?.let { primary ->
+                    buildJsonArray { add(buildJsonObject { primary.forEach { (key,value)->put(key,value) };put("primary",true) }) }
+                } ?: JsonArray(emptyList())
+        } else request("account.list")["data"] as? JsonArray ?: JsonArray(emptyList())
         val slots = (request("wx.status").obj("data")["slots"] as? JsonArray)?.mapNotNull {
             val value = it as? JsonObject
             if (value?.flag("present") == true) (value["slot"] as? JsonPrimitive)?.intOrNull else null
         }?.toSet().orEmpty()
-        mutable.update { state -> state.copy(slots = slots, accounts = accounts.mapIndexedNotNull { index, entry ->
+        mutable.update { state -> state.copy(slots = slots, accountRevision=(snapshot["revision"] as? JsonPrimitive)?.longOrNull, accounts = accounts.mapIndexedNotNull { index, entry ->
             val account = entry as? JsonObject ?: return@mapIndexedNotNull null
-            Account(account.text("label"), account.text("user"), account.flag("enabled"), index, index in slots)
+            Account(account.text("label"), account.text("user"), account.flag("enabled"), index, index in slots,
+                (account["passwordSet"] as? JsonPrimitive)?.booleanOrNull,(account["fingerprintSet"] as? JsonPrimitive)?.booleanOrNull,
+                account.text("addr",""),(account["lat"] as? JsonPrimitive)?.doubleOrNull,(account["lng"] as? JsonPrimitive)?.doubleOrNull,
+                account.text("lastDate","")+" "+account.text("lastMsg",""),account.flag("primary"))
         }) }
     }
     private fun applyStatus(data: JsonObject) {

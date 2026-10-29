@@ -105,6 +105,14 @@ class CommandRouter {
   void handleFactoryReset(JsonObjectConst request, int32_t id);
   void handleTestTime(int32_t id);
   void handleAccountAdd(JsonObjectConst request, int32_t id);
+  void handleAccountSnapshot(int32_t id);
+  void handleAccountPatch(JsonObjectConst request, int32_t id);
+  void handleSelected(JsonObjectConst request, int32_t id);
+  bool clearAccountAuthorizations(int32_t id);
+  bool m_captureReply = false;
+  bool m_capturedOk = false;
+  String m_capturedMessage;
+  String m_capturedData;
   /// @brief 单独开关某个账号是否参与打卡：{"op":"account.enable","label":"A01","on":false}
   void handleAccountEnable(JsonObjectConst request, int32_t id);
   void handleMultiSet(JsonObjectConst request, int32_t id);

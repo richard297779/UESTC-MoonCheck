@@ -77,6 +77,7 @@ class AppConfig {
   /// @brief 用设备自身的 NVS 配置（auth/loc）合成一条账号记录。
   /// @note 账号表为空时使用（老设备只配过 auth 的迁移路径），等价于「列表第一个用户」。
   CheckinProfile deviceProfile() const;
+  CheckinProfile storedProfile();
 
   /// @brief 相邻两个账号之间的间隔秒数（错峰，默认 20 s）。
   uint16_t multiGapSeconds() const { return m_multiGapSeconds; }

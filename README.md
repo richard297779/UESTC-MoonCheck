@@ -3,7 +3,7 @@
 
 # 🌙 MoonCheck
 
-**ESP32 宿舍自动定位打卡终端** · 发行版本 v0.7.0（Latest；另有独立 [桌面版](desktop/README.md)）
+**ESP32 宿舍自动定位打卡终端** · 发行版本 v0.8.0（Latest；另有独立 [桌面版](desktop/README.md)）
 
 一块常驻宿舍的 ESP32，蓝牙配置一次，之后每晚自动完成「登录 → 门户预热 → 进入微应用 → 获取微信操作票据 → 定位打卡 → 结果确认」。配置完成后不需要电脑，也不用每天操作。
 
@@ -25,7 +25,9 @@
 - **多板型构建**：保留 S3-N16R8 与 WROOM-32，新增 WROVER-4MB、S3-N8/N8R8、C3-DevKitM-1 实验目标。新增型号未经实机验证，欢迎提供脱敏验证反馈，见[板型支持矩阵](docs/board-support.md)。
 - **APK 运行状态**：v0.7.0 增加实际联网名称、内存峰值、PSRAM、运行时长与开发者脱敏日志。
 - **桌面版 1.1.0**：电脑独立运行，新增微信授权刷新、MMTLS 与取票，保留多账号、窗口和通知；已完成离线移植与 Windows 打包，尚待真实桌面账号实测。详见[桌面说明](desktop/README.md)。
-- **电脑端下载**：[desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供独立 Windows 程序与 BLE GUI 源码包；尚待真实桌面账号和 GUI BLE 联调，固件 Latest 仍为 v0.7.0。
+- **0.8.0 蓝牙中控**：电脑端采用四栏目与九列账号表，支持留空保留、微信目标匹配、选择一个或多个账号执行；APK 同步安全账号管理，详见[使用说明](docs/ble-gui.md)。
+- **电脑端下载**：最新 BLE 图形控制台源码随 [v0.8.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 发行；独立打卡程序仍为 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0)，其真实账号链路未沿用 BLE 验收结论。
+- **内置微信扫码授权**：Android 和电脑 BLE GUI 可获取、刷新二维码，在本人微信确认后回填三 Cookie；不自动发送设备。[实现与验证](dev/docs/qr-authorization.md)记录验证范围；本轮用户已确认基本功能，未提供逐项扫码闭环或兼容矩阵明细。
 
 ---
 
@@ -47,15 +49,13 @@
 
 ### 1. 刷固件
 
-v0.7.0 修复测试构建已解决连接时状态回执 JSON 不完整的问题，已有用户应更新固件（同分区只刷 app，保留配置），APK 无需重装。
+2026-10-29 用户确认本轮“基本功能已查验无误”，授权发布 0.8.0 Latest。请同时更新对应板型固件和 APK，电脑端使用本版 BLE 源码包；旧 0.7.0 不具备新的账号能力。未提供逐板型 / 手机明细，其余四种实验板型仍未经实机验证。
 
-2026-10-27 用户确认修正版实测可行，v0.7.0 正式发行。未指明逐板型测试环境，新增四种板型仍未经实际验证。
-
-从 [v0.7.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.7.0) 下载对应板型固件；也可下载 `MoonCheck-0.7.0-release.zip` 获取六板型固件（四种为未实测实验目标）、Android 测试 APK 与使用说明。网页烧录见[刷固件](docs/flashing.md)，自行构建见[固件说明](firmware/README.md)。
+从 [v0.8.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载对应板型固件；也可下载 `MoonCheck-0.8.0-release.zip` 获取六板型固件（四种为未实测实验目标）、Android 测试 APK、电脑 BLE 控制台源码与使用说明。网页烧录见[刷固件](docs/flashing.md)，自行构建见[固件说明](firmware/README.md)。
 
 > 详细步骤、升级（保留配置）和报错处理见 **[刷固件](docs/flashing.md)**。
 
-> **版本范围：** v0.6.0 新增 Android 控制端并修复长配置截断；APK 实际联调已由用户确认通过、功能全部正常，当时 v0.6.0 转为 Latest；当前 Latest 为 v0.7.0；APK 仍使用原 Debug 签名。旧 v0.5.1 已支持微信票据，但长 JSON 命令会受旧队列限制。
+> **版本范围：** v0.6.0 新增 Android 控制端并修复长配置截断；APK 实际联调已由用户确认通过、功能全部正常，当时 v0.6.0 转为 Latest；当前 Latest 为 v0.8.0；APK 仍使用原 Debug 签名。旧 v0.5.1 已支持微信票据，但长 JSON 命令会受旧队列限制。
 
 ### 2. 准备授权信息与宿舍坐标
 
@@ -69,7 +69,7 @@ v0.7.0 修复测试构建已解决连接时状态回执 JSON 不完整的问题�
 
 ### 3. 蓝牙配置
 
-安卓用户可安装发行页的 `MoonCheck-0.7.0-android-debug.apk`，在“配置”页按向导填写，应用内“帮助”可离线搜索使用指南。APK 是近距离控制器，仍需要开发板；微信初始授权仍由本人按上节准备。详情见 [Android 使用说明](android/README.md)。
+安卓用户可安装发行页的 `MoonCheck-0.8.0-android-debug.apk`，在“配置”页按向导填写，应用内“帮助”可离线搜索使用指南。APK 是近距离控制器，仍需要开发板；微信初始授权仍由本人按上节准备。详情见 [Android 使用说明](android/README.md)。
 
 电脑用户：
 
@@ -174,7 +174,7 @@ notify add A01url url=… accounts=A01    # 结果单独推给他
 | [多人打卡](docs/multi-account.md) | 账号表与逐个开关 |
 | [桌面版](desktop/README.md) | 不烧板子：Windows/Linux 单文件版（CLI+图形界面） |
 | [Android 控制端](android/README.md) | BLE 按键控制、配置向导、账号与离线帮助（开发测试版） |
-| [项目体检](docs/project-health.md) | v0.7.0 检查与历史 v0.6.0 记录 |
+| [项目体检](docs/project-health.md) | v0.8.0 检查及历次发行记录 |
 | [板型支持](docs/board-support.md) | 构建环境、硬件规格、验证状态与反馈 |
 | [常见问题](docs/faq.md) | 排错速查与已知限制 |
 | [发行说明](release/README.md) | 版本变化与升级注意 |

@@ -3,6 +3,8 @@
 // ============================================================================
 
 #include "command_router.h"
+#include "account_patch.h"
+#include "account_selection.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
@@ -132,6 +134,7 @@ void CommandRouter::processPending() {
 // ---------------------------------------------------------------- 事件与回执
 
 void CommandRouter::emitEvent(const String& type, const String& payloadJson) {
+  if (m_captureReply) return;
   String frame = "{\"evt\":\"";
   frame += type;
   frame += '"';
@@ -145,6 +148,7 @@ void CommandRouter::emitEvent(const String& type, const String& payloadJson) {
 }
 
 void CommandRouter::replyOk(int32_t id, const String& message, const String& dataJson) {
+  if (m_captureReply) { m_capturedOk=true; m_capturedMessage=message; m_capturedData=dataJson; return; }
   String frame = "{\"id\":";
   frame += String(id);
   frame += ",\"evt\":\"ok\",\"msg\":\"";
@@ -159,6 +163,7 @@ void CommandRouter::replyOk(int32_t id, const String& message, const String& dat
 }
 
 void CommandRouter::replyError(int32_t id, Result result, const String& message) {
+  if (m_captureReply) { m_capturedOk=false; m_capturedMessage=message; m_capturedData=""; return; }
   String frame = "{\"id\":";
   frame += String(id);
   frame += ",\"evt\":\"error\",\"code\":\"";
@@ -291,6 +296,11 @@ void CommandRouter::dispatchCommand(const String& line) {
     return;
   }
   const JsonObjectConst request = doc.as<JsonObjectConst>();
+  if (request.containsKey("expectedRevision") && (m_accounts == nullptr ||
+      !request["expectedRevision"].is<uint32_t>() || request["expectedRevision"].as<uint32_t>() != m_accounts->revision())) {
+    replyError(id, Result::InvalidParam, "account snapshot changed; refresh accounts and retry"); return;
+  }
+  if (request.containsKey("targets")) { handleSelected(request,id); return; }
 
   if (op == "hello") {
     handleHello(id);
@@ -319,6 +329,14 @@ void CommandRouter::dispatchCommand(const String& line) {
     // 凭据导入：{"op":"wx.import","slot":0,"openid":"...","access":"...","refresh":"...","expiresAt":...}
     if (m_wxCred == nullptr) { replyError(id, Result::NotReady, "wx store not ready"); return; }
     const int slot = doc["slot"] | 0;
+    if (request.containsKey("target")) {
+      const String target=doc["target"] | "";
+      CheckinProfile profile;
+      const bool primary=m_accounts != nullptr && m_accounts->count()==0 && slot==0 && target=="@primary";
+      if (!request.containsKey("expectedRevision") || (!primary && (m_accounts == nullptr || slot<0 || !m_accounts->get(slot,profile) || profile.label!=target))) {
+        replyError(id,Result::InvalidParam,"authorization target changed; refresh accounts"); return;
+      }
+    }
     wx::OauthCredentials cred;
     cred.openid = doc["openid"] | "";
     cred.accessToken = doc["access"] | "";
@@ -336,6 +354,14 @@ void CommandRouter::dispatchCommand(const String& line) {
     // 设备端全链路：刷新(可选)→login_buffer→MMTLS取码→check-bind→取票（不提交）
     if (m_wxCred == nullptr) { replyError(id, Result::NotReady, "wx store not ready"); return; }
     const int slot = doc["slot"] | 0;
+    if (slot<0 || slot>=static_cast<int>(wx::CredentialStore::kMaxSlots)) { replyError(id,Result::InvalidParam,"invalid slot"); return; }
+    if (request.containsKey("target")) {
+      const String target=request["target"] | ""; CheckinProfile profile;
+      const bool primary=m_accounts && !m_accounts->hasAny() && slot==0 && target=="@primary";
+      if (!request.containsKey("expectedRevision") || (!primary && (!m_accounts || !m_accounts->get(slot,profile) || profile.label!=target))) {
+        replyError(id,Result::InvalidParam,"authorization target changed; refresh accounts"); return;
+      }
+    }
     char payload[16];
     snprintf(payload, sizeof(payload), "slot=%d", slot);
     if (!enqueue(WorkKind::WxTest, payload, false, id))
@@ -374,6 +400,10 @@ void CommandRouter::dispatchCommand(const String& line) {
     }
   } else if (op == "account.add") {
     handleAccountAdd(request, id);
+  } else if (op == "account.snapshot") {
+    handleAccountSnapshot(id);
+  } else if (op == "account.patch") {
+    handleAccountPatch(request,id);
   } else if (op == "account.list") {
     if (m_accounts == nullptr) {
       replyError(id, Result::NotReady, "account store unavailable");
@@ -385,6 +415,8 @@ void CommandRouter::dispatchCommand(const String& line) {
     if (m_accounts == nullptr || label.length() == 0) {
       replyError(id, Result::InvalidParam, "label required");
     } else {
+      if (m_accounts->indexOfLabel(label)<0) { replyError(id,Result::NotFound,"account not found"); return; }
+      if (!clearAccountAuthorizations(id)) return;
       const Result result = m_accounts->remove(label);
       if (result != Result::Ok) {
         replyError(id, result, "account not found");
@@ -395,7 +427,8 @@ void CommandRouter::dispatchCommand(const String& line) {
   } else if (op == "account.enable") {
     handleAccountEnable(request, id);
   } else if (op == "account.clear") {
-    if (m_accounts != nullptr) m_accounts->clearAll();
+    if (!clearAccountAuthorizations(id)) return;
+    if (m_accounts == nullptr || m_accounts->clearAll()!=Result::Ok) { replyError(id,Result::StorageError,"clear accounts failed"); return; }
     replyOk(id, "accounts cleared");
   } else if (op == "multi.set") {
     handleMultiSet(request, id);
@@ -507,7 +540,7 @@ void CommandRouter::handleHello(int32_t id) {
            "\"btMac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"bleName\":\"%s-%02X%02X\","
            "\"flashMB\":%u,\"psramKB\":%u,\"caps\":[\"wifi\",\"ble\",\"cas\",\"checkin\",\"test\","
-           "\"cron\",\"logs\"]}",
+           "\"cron\",\"logs\",\"account-v2\",\"selected-execution\"]}",
            BoardProfile::kId, FW_VERSION, FW_PROTO_VERSION, FW_BUILD_TIME, mac[0], mac[1], mac[2], mac[3], mac[4],
            mac[5], btMac[0], btMac[1], btMac[2], btMac[3], btMac[4], btMac[5],
            FW_DEVICE_NAME_PREFIX, btMac[4], btMac[5],
@@ -529,6 +562,10 @@ void CommandRouter::handleAuthSet(JsonObjectConst request, int32_t id) {
     replyError(id, Result::InvalidParam, "user and pass required");
     return;
   }
+  const bool identityChanged=m_config->storedProfile().studentId!=user;
+  if (identityChanged && m_accounts && !m_accounts->hasAny() && m_wxCred && m_wxCred->remove(0)!=Result::Ok) {
+    replyError(id,Result::StorageError,"cannot clear prior authorization; auth unchanged"); return;
+  }
   const Result result = m_config->setAuth(user, password, fingerprint);
   if (result != Result::Ok) {
     replyError(id, result, "save auth failed");
@@ -537,7 +574,135 @@ void CommandRouter::handleAuthSet(JsonObjectConst request, int32_t id) {
   char data[96];
   snprintf(data, sizeof(data), "{\"fingerprintSet\":%s}",
            fingerprint.length() > 0 ? "true" : "false");
+  if (m_accounts) m_accounts->invalidateRevision();
+  if(identityChanged) { m_cookies->clear(); m_checkin->resetLoginState(); m_api->clearOperationTicket(); }
   replyOk(id, "auth saved", data);
+}
+
+void CommandRouter::handleAccountSnapshot(int32_t id) {
+  if (!m_accounts || !m_config) { replyError(id,Result::NotReady,"account store not ready"); return; }
+  JsonDocument doc;
+  if (deserializeJson(doc,m_accounts->toJsonDetails())) { replyError(id,Result::InternalError,"account snapshot allocation failed"); return; }
+  if (!m_accounts->hasAny()) {
+    const auto p=m_config->storedProfile();
+    JsonObject row=doc["primary"].to<JsonObject>();
+    row["slot"]=0; row["label"]="@primary"; row["user"]=p.studentId;
+    row["passwordSet"]=p.password.length()>0; row["fingerprintSet"]=p.hasFingerprint(); row["enabled"]=true;
+    row["lat"]=p.latitude; row["lng"]=p.longitude; row["addr"]=p.address;
+  }
+  if(doc.overflowed()) { replyError(id,Result::InternalError,"account snapshot allocation failed"); return; }
+  String out; serializeJson(doc,out); replyOk(id,"account snapshot",out);
+}
+
+bool CommandRouter::clearAccountAuthorizations(int32_t id) {
+  if (m_wxCred) for (size_t slot=0;slot<wx::CredentialStore::kMaxSlots;++slot) {
+    if (m_wxCred->remove(slot)!=Result::Ok) {
+      replyError(id,Result::StorageError,"authorization cleanup failed; account table unchanged; reimport cleared slots"); return false;
+    }
+  }
+  return true;
+}
+
+void CommandRouter::handleAccountPatch(JsonObjectConst request,int32_t id) {
+  if (!m_accounts || !m_config || !request.containsKey("expectedRevision") || !request["fields"].is<JsonObjectConst>()) {
+    replyError(id,Result::InvalidParam,"account patch requires snapshot revision and fields"); return;
+  }
+  const bool creating=request["create"] | false;
+  const String target=request["target"] | "";
+  const int index=m_accounts->indexOfLabel(target);
+  CheckinProfile previous, profile;
+  if (!creating && (index<0 || !m_accounts->get(index,previous))) { replyError(id,Result::NotFound,"account not found"); return; }
+  if (creating) {
+    const auto defaults=m_config->storedProfile();
+    profile.latitude=defaults.latitude; profile.longitude=defaults.longitude; profile.address=defaults.address;
+  } else profile=previous;
+  JsonObjectConst fields=request["fields"].as<JsonObjectConst>();
+  bool changed=false;
+  for (JsonPairConst field:fields) if (!field.value().is<const char*>() || strlen(field.value().as<const char*>())>0) changed=true;
+  if (!changed) { replyError(id,Result::InvalidParam,"no changed fields"); return; }
+  const char* error="invalid account patch";
+  if (!mergeAccountPatch(profile,fields,creating,error)) { replyError(id,Result::InvalidParam,error); return; }
+  if (creating && m_accounts->indexOfLabel(profile.label)>=0) { replyError(id,Result::InvalidParam,"label already exists; use update"); return; }
+  if (creating && m_accounts->count()>=AccountStore::kMaxProfiles) { replyError(id,Result::InvalidParam,"maximum 6 accounts"); return; }
+  const int collision=m_accounts->indexOfLabel(profile.label);
+  if (!creating && collision>=0 && collision!=index) { replyError(id,Result::InvalidParam,"label already exists"); return; }
+  const bool identityChanged=!creating && previous.studentId!=profile.studentId;
+  if (identityChanged) { profile.lastDate=""; profile.lastOk=false; profile.lastMsg=""; }
+  const int authorizationSlot=creating?static_cast<int>(m_accounts->count()):index;
+  if (m_wxCred && (creating || identityChanged) && m_wxCred->remove(authorizationSlot)!=Result::Ok) {
+    replyError(id,Result::StorageError,"cannot clear prior authorization; account unchanged"); return;
+  }
+  const Result saved=creating?m_accounts->addOrUpdate(profile):m_accounts->replaceAt(index,profile);
+  if (saved!=Result::Ok) { replyError(id,saved,"save account patch failed"); return; }
+  if (identityChanged) { m_cookies->clear(); m_checkin->resetLoginState(); m_api->clearOperationTicket(); }
+  bool linksOk=true;
+  if (!creating && previous.label!=profile.label) {
+    for(size_t i=0;i<m_config->notifyChannelCount();++i) {
+      const auto channel=m_config->notifyChannelAt(i);
+      String csv=","+channel.accountsCsv+",";
+      const String oldToken=","+previous.label+",";
+      if(csv.indexOf(oldToken)<0) continue;
+      csv.replace(oldToken,","+profile.label+",");
+      csv=csv.substring(1,csv.length()-1);
+      if(m_config->linkNotifyChannel(channel.label,csv)!=Result::Ok) linksOk=false;
+    }
+  }
+  JsonDocument output;
+  output["label"]=profile.label; output["revision"]=m_accounts->revision();
+  output["authorizationCleared"]=creating||identityChanged; output["notificationLinksUpdated"]=linksOk;
+  String out; serializeJson(output,out);
+  replyOk(id,linksOk?"account patch saved":"account saved; notification links need manual repair",out);
+}
+
+void CommandRouter::handleSelected(JsonObjectConst request,int32_t id) {
+  const String op=request["op"] | "";
+  if (!m_accounts || !m_config || !m_checkin || !request.containsKey("expectedRevision") ||
+      !request["targets"].is<JsonArrayConst>() ||
+      (op!="test.login" && op!="test.chain" && op!="test.checkin" && op!="test.multi")) {
+    replyError(id,Result::InvalidParam,"selected execution requires supported op, targets and snapshot revision"); return;
+  }
+  std::vector<CheckinProfile> queue;
+  const char* targetError="invalid target selection";
+  if(!prepareSelectedAccounts(request["targets"].as<JsonArrayConst>(),*m_accounts,m_config->storedProfile(),queue,targetError)) {
+    replyError(id,Result::InvalidParam,targetError); return;
+  }
+  const int wait=request["wait_s"] | 0;
+  if(wait<0 || wait>900) { replyError(id,Result::InvalidParam,"invalid wait time"); return; }
+  auto original=m_config->deviceProfile(); original.label=m_config->activeAccount();
+  JsonDocument output; JsonArray rows=output["accounts"].to<JsonArray>();
+  for(size_t i=0;i<queue.size();++i) {
+    const auto& profile=queue[i];
+    JsonDocument event; event["account"]=profile.label; event["index"]=i+1; event["of"]=queue.size(); event["stage"]="selected";
+    String ev; serializeJson(event,ev); emitEvent("progress",ev.substring(1,ev.length()-1));
+    m_cookies->clear(); m_checkin->resetLoginState(); m_api->clearOperationTicket(); m_config->applyProfile(profile);
+    WorkItem item; item.requestId=id; item.force=request["force"] | false;
+    snprintf(item.payload,sizeof(item.payload),"%d",wait);
+    m_captureReply=true; m_capturedOk=false; m_capturedMessage="no result"; m_capturedData="";
+    if(op=="test.login") workTestLogin(item);
+    else if(op=="test.chain") workTestChain(item);
+    else if(op=="test.checkin" || !(request["probe"] | true)) workTestCheckin(item);
+    else { workTestLogin(item); if(m_capturedOk) workTestProbe(item); }
+    m_captureReply=false;
+    JsonObject row=rows.add<JsonObject>(); row["label"]=profile.label; row["operation"]=op; row["ok"]=m_capturedOk; row["msg"]=m_capturedMessage;
+    if(m_capturedData.length()) {
+      JsonDocument detail;
+      if(!deserializeJson(detail,m_capturedData)) {
+        row["data"].set(detail.as<JsonVariantConst>());
+        for(const char* flag:{"sessionWorks","sessionValid","appEntry"})
+          if(detail[flag].is<bool>() && !detail[flag].as<bool>()) m_capturedOk=false;
+      } else {
+        m_capturedOk=false; row["msg"]="execution detail incomplete; query account status before retry";
+      }
+    }
+    row["ok"]=m_capturedOk;
+    row["status"]=m_capturedMessage=="skipped"?"skipped":m_capturedOk?"passed":"failed";
+    JsonDocument done; done["account"]=profile.label; done["ok"]=m_capturedOk; done["stage"]="completed";
+    String completed; serializeJson(done,completed); emitEvent("progress",completed.substring(1,completed.length()-1));
+    if(i+1<queue.size() && m_config->multiGapSeconds()) vTaskDelay(pdMS_TO_TICKS(m_config->multiGapSeconds()*1000UL));
+  }
+  m_config->applyProfile(original); m_cookies->clear(); m_checkin->resetLoginState(); m_api->clearOperationTicket();
+  if(output.overflowed()) { replyError(id,Result::InternalError,"execution finished but summary unavailable; query account status before retry"); return; }
+  String out; serializeJson(output,out); replyOk(id,"selected execution completed",out);
 }
 
 void CommandRouter::handleLocationSet(JsonObjectConst request, int32_t id) {
@@ -614,6 +779,12 @@ void CommandRouter::handleAccountAdd(JsonObjectConst request, int32_t id) {
   }
   // 没给指纹就沿用设备当前配置的指纹（同一台设备共用一个"信任浏览器"也许可行，
   // 但更稳妥的是每个账号各用自己浏览器的指纹）
+  CheckinProfile prior;
+  const bool identityChanged=existingIndex>=0 && m_accounts->get(existingIndex,prior) && prior.studentId!=profile.studentId;
+  const int slot=existingIndex>=0?existingIndex:static_cast<int>(m_accounts->count());
+  if ((identityChanged || existingIndex<0) && slot<static_cast<int>(AccountStore::kMaxProfiles) && m_wxCred && m_wxCred->remove(slot)!=Result::Ok) {
+    replyError(id,Result::StorageError,"cannot clear prior authorization; account unchanged"); return;
+  }
   const Result result = m_accounts->addOrUpdate(profile);
   if (result == Result::InvalidParam) {
     replyError(id, result,
@@ -1126,9 +1297,8 @@ void CommandRouter::workTestCheckin(const WorkItem& item) {
   if ((outcome == CheckinOutcome::Success) || (outcome == CheckinOutcome::AlreadyDone) ||
       (outcome == CheckinOutcome::Failed)) {
     if (m_config != nullptr) {
-      if (soleAccount) {
-        m_config->setLastResult(todayKey, ok, message);
-      } else if (m_accounts != nullptr) {
+      if (soleAccount) m_config->setLastResult(todayKey, ok, message);
+      if (m_accounts != nullptr && m_accounts->indexOfLabel(who)>=0) {
         m_accounts->setResult(m_config->activeAccount(), todayKey, ok, message);
         LOG_I(kTag, "manual check-in for %s recorded per-account; global last untouched",
               m_config->activeAccount().c_str());
@@ -1662,17 +1832,19 @@ void CommandRouter::workWxTest(const WorkItem& item) {
 // ---------------------------------------------------------------- 窗口起点取号
 
 void CommandRouter::workWxPrefetch(const WorkItem& item) {
-  // 默认账号（self）= 槽位 0；多账号时各自 perform 前仍会按属主现场取票。
+  // 首个启用账号未必是槽位 0；预取也必须验证当前身份与账号标签。
   if (m_wxCred == nullptr || m_api == nullptr || m_config == nullptr) return;
   const String owner = m_config->auth().studentId;
+  const int slot=m_accounts?activeAuthorizationSlot<CheckinProfile>(*m_accounts,m_config->activeAccount(),owner):0;
+  if(slot<0) { LOG_W("wx_prefetch","active account mapping unavailable; defer to account runner"); return; }
   if (m_api->hasFreshTicketFor(owner)) {
     LOG_I("wx_prefetch", "fresh ticket already installed, skip");
     return;
   }
   String ticket;
   String error;
-  LOG_I("wx_prefetch", "prefetching wx ticket for slot 0");
-  if (ensureWxTicket(0, ticket, error) == Result::Ok && ticket.length() == 43) {
+  LOG_I("wx_prefetch", "prefetching wx ticket for slot %d",slot);
+  if (ensureWxTicket(slot, ticket, error) == Result::Ok && ticket.length() == 43) {
     m_api->setOperationTicket(ticket, owner);
     LOG_I("wx_prefetch", "ticket installed (43 chars) for owner %.8s", owner.c_str());
   } else {

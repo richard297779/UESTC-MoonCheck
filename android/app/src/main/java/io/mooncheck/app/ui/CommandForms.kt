@@ -6,7 +6,7 @@ enum class Kind { Text, Secret, Int, Decimal, Choice }
 data class Input(val key: String, val title: String, val hint: String = "", val initial: String = "",
     val kind: Kind = Kind.Text, val required: Boolean = true, val choices: List<String> = emptyList())
 data class CommandForm(val title: String, val op: String, val description: String, val inputs: List<Input>,
-    val step: String? = null, val confirm: Boolean = false)
+    val step: String? = null, val confirm: Boolean = false, val extra: JsonObject = JsonObject(emptyMap()))
 
 object Forms {
     val wifi = CommandForm("连接 WiFi", "wifi.set", "设备仅支持 2.4 GHz。配置保存后，设备会立即尝试连接。", listOf(
@@ -14,7 +14,7 @@ object Forms {
     val auth = CommandForm("配置本人账号", "auth.set", "单人模式使用此配置。指纹来自你平时登录的浏览器，不是手机指纹识别。", listOf(
         Input("user", "学号"), Input("pass", "统一认证密码", kind = Kind.Secret),
         Input("bfp", "浏览器指纹", "32 位十六进制；留空保留设备原值", kind = Kind.Secret, required = false)), "auth")
-    val wx = CommandForm("导入微信授权", "wx.import", "仅导入本人按帮助说明取得的授权。数据直接发送至当前设备，提交后清空输入；账号表顺序决定槽位。", listOf(
+    val wx = CommandForm("导入微信授权", "wx.import", "可内置微信扫码后填入三个字段，也可手动填写。扫码不会自动保存到设备；请核对本人账号和槽位，提交后清空输入。", listOf(
         Input("slot", "账号槽位", "单人默认 0；多人按账号页顺序核对", "0", Kind.Choice, choices = (0..5).map(Int::toString)),
         Input("openid", "OpenID", kind = Kind.Secret), Input("access", "Access Token", kind = Kind.Secret),
         Input("refresh", "Refresh Token", kind = Kind.Secret), Input("expiresAt", "到期 Unix 秒", "推荐填 0，由固件首次使用前刷新", "0", Kind.Int)), "wx", true)
@@ -22,9 +22,14 @@ object Forms {
         Input("lat", "纬度", "例如 30.xxxxxx", kind = Kind.Decimal), Input("lng", "经度", "例如 103.xxxxxx", kind = Kind.Decimal), Input("addr", "地址说明", required = false)), "location")
     val schedule = CommandForm("设置自动计划", "sched.set", "使用设备时间。保存计划不会自动开启每日任务，完成配置和验证后请主动开启。", listOf(
         Input("at", "计划时间", "HH:MM", "22:00"), Input("window_end", "截止时间", "HH:MM", "23:30"), Input("jitter_s", "随机抖动（秒）", initial = "30", kind = Kind.Int)), "schedule")
-    val account = CommandForm("添加或更新账号", "account.add", "最多 6 人，需每位持有人知情同意。同名标签会覆盖该账号；坐标沿用设备配置。保存后请重新核对微信槽位。", listOf(
+    val account = CommandForm("添加或更新账号", "account.add", "最多 6 人，需本人同意。同名标签会覆盖该账号；经纬度需成对填写，都留空则沿用设备当前坐标（覆盖也如此）。地址可单独填写；保存后核对微信槽位。", listOf(
         Input("label", "账号标签", "1–12 位字母、数字、- 或 _"), Input("user", "学号"), Input("pass", "密码", kind = Kind.Secret),
-        Input("bfp", "浏览器指纹", "可留空；覆盖时请重新确认授权", kind = Kind.Secret, required = false)), confirm = true)
+        Input("bfp", "浏览器指纹", "可留空；覆盖时请重新确认授权", kind = Kind.Secret, required = false),
+        Input("lat", "账号纬度", "与经度成对填写；都留空沿用设备坐标", kind = Kind.Decimal, required = false),
+        Input("lng", "账号经度", "请填写本人现场确认的坐标", kind = Kind.Decimal, required = false),
+        Input("addr", "账号地址", "可单独填写；留空不代表保留旧账号地址", required = false)), confirm = true)
+    val accountCreate = account.copy(title="新建账号",description="新建须填写标签、学号、密码、32 位浏览器指纹；位置可选。需要支持 account-v2 的固件。",inputs=account.inputs.map { if(it.key=="bfp") it.copy(required=true,hint="32 位十六进制") else if(it.key=="addr") it.copy(hint="留空采用设备默认地址") else it })
+    val accountEdit = account.copy(title="修改已有账号",op="account.patch",description="按标签、序号或完整学号匹配唯一账号；仅修改非空项，留空保留。修改学号需重新授权。",inputs=listOf(Input("_target","目标标签 / 序号 / 学号"))+account.inputs.map { it.copy(required=false,hint="留空保留设备原值") })
     val name = CommandForm("修改设备名称", "name.set", "显示为 WANAN-标签。修改后重新扫描，设备 MAC 不变。", listOf(Input("name", "名称标签", "1–12 位字母、数字、- 或 _")))
     val notify = CommandForm("配置默认通知", "notify.set", "通知地址可能包含密钥，仅发送给所选设备。Bark 使用 0，ntfy 使用 1，Server酱使用 2。", listOf(
         Input("url", "推送 URL", "https://…", kind = Kind.Secret), Input("style", "发送格式", initial = "2", kind = Kind.Choice, choices = listOf("0", "1", "2")),
@@ -41,7 +46,8 @@ object Forms {
             for (input in form.inputs) {
                 val value = values[input.key].orEmpty()
                 require(!input.required || value.isNotBlank()) { "请填写${input.title}" }
-                if (!input.required && value.isEmpty() && input.key != "pass") continue
+                if (!input.required && value.isEmpty() && (input.key != "pass" || form.op=="account.patch")) continue
+                if (form.op in setOf("account.add","account.patch") && input.key in setOf("lat", "lng") && value.isBlank()) continue
                 when (input.kind) {
                     Kind.Int -> put(input.key, value.toLongOrNull() ?: error("${input.title}需要整数"))
                     Kind.Decimal -> put(input.key, value.toDoubleOrNull()?.takeIf { it.isFinite() } ?: error("${input.title}需要有效数字"))
@@ -56,7 +62,8 @@ object Forms {
             if (form.op == "notify.enable") put("on", values["on"] == "1")
         }
         fun number(key: String) = fields[key]?.jsonPrimitive?.doubleOrNull ?: 0.0
-        if (form.op == "loc.set") {
+        if (form.op in setOf("account.add","account.patch")) require(("lat" in fields) == ("lng" in fields)) { "账号经纬度需要成对填写，或同时留空" }
+        if (form.op == "loc.set" || (form.op in setOf("account.add","account.patch") && "lat" in fields)) {
             require(number("lat") in -90.0..90.0 && number("lng") in -180.0..180.0) { "纬度需在 -90～90，经度需在 -180～180" }
             require(number("lat") != 0.0 && number("lng") != 0.0) { "当前固件将零坐标视为未配置，请核对宿舍坐标" }
         }

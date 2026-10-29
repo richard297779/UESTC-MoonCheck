@@ -15,6 +15,8 @@ class DeviceRepositoryTest {
         override var onBytes: (ByteArray) -> Unit = {}
         override var onDisconnect: () -> Unit = {}
         val sent = mutableListOf<String>()
+        var accountV2 = false
+        var selectedReply: JsonArray? = null
         var productionStatus = false
         var holdLogs = false
         var heldReply: ByteArray? = null
@@ -39,9 +41,11 @@ class DeviceRepositoryTest {
             val data: JsonElement = if (op == "status" && productionStatus)
                 ProtocolCodec.json.parseToJsonElement(javaClass.getResource("/firmware-status.json")!!.readText()).jsonObject.obj("data")
                 else when (op) {
-                "hello" -> buildJsonObject { put("proto", 1); put("fw", "0.5.1"); put("btMac", "00:00:00:00:00:01"); if (longCommands) put("maxCommandBytes", 4095) }
+                "hello" -> buildJsonObject { put("proto", 1); put("fw", "0.5.1"); put("btMac", "00:00:00:00:00:01"); if (longCommands) put("maxCommandBytes", 4095); if(accountV2)put("caps",buildJsonArray { add("account-v2");add("selected-execution") }) }
                 "status" -> buildJsonObject { put("net", buildJsonObject { put("state", "connected"); put("ssid", "Actual Network"); put("timeSynced", true) }); put("runtime", runtimeReply) }
                 "logs" -> buildJsonObject { put("text", logsReply); put("dropped", 3) }
+                "account.snapshot" -> buildJsonObject { put("revision",22);put("accounts",buildJsonArray { add(buildJsonObject { put("slot",0);put("label","A");put("user","fixture-01");put("enabled",true);put("passwordSet",true) }) }) }
+                "test.login" -> buildJsonObject { put("accounts",selectedReply ?: JsonArray(emptyList())) }
                 "account.list" -> buildJsonArray { add(buildJsonObject { put("label", "A01"); put("user", "masked"); put("enabled", true) }) }
                 "wx.status" -> buildJsonObject { put("slots", buildJsonArray { add(buildJsonObject { put("slot", 0); put("present", true) }) }) }
                 else -> JsonObject(emptyMap())
@@ -59,6 +63,30 @@ class DeviceRepositoryTest {
         }
     }
     private val board = NearbyDevice("WANAN-TEST", "00:00:00:00:00:01", -40)
+    @Test fun newCapabilityLoadsFullAccountSnapshotAndClearsOnDisconnect() = runTest {
+        val fake=Fake();fake.accountV2=true
+        val repository=DeviceRepository(fake,backgroundScope)
+        repository.connect(board);runCurrent()
+        assertEquals(22L,repository.state.value.accountRevision)
+        assertEquals("fixture-01",repository.state.value.accounts.single().user)
+        assertTrue("account.snapshot" in fake.sent)
+        repository.disconnect();runCurrent()
+        assertNull(repository.state.value.accountRevision)
+        assertTrue(repository.state.value.accounts.isEmpty())
+    }
+    @Test fun mixedSelectedResultsAreDisplayedPerAccountWithoutClaimingAllPassed() = runTest {
+        val fake=Fake();fake.accountV2=true
+        fake.selectedReply=buildJsonArray {
+            add(buildJsonObject { put("label","A");put("ok",true);put("status","passed");put("msg","session verified") })
+            add(buildJsonObject { put("label","B");put("ok",false);put("status","failed");put("msg","login rejected") })
+        }
+        val repository=DeviceRepository(fake,backgroundScope)
+        repository.connect(board);runCurrent()
+        repository.execute("登录测试","test.login",buildJsonObject { put("targets",buildJsonArray { add("A");add("B") });put("expectedRevision",22) });runCurrent()
+        assertTrue(repository.state.value.error)
+        assertTrue(repository.state.value.message.contains("A · 通过"))
+        assertTrue(repository.state.value.message.contains("B · 未通过"))
+    }
     @Test fun handshakeCompletesWithProductionFirmwareStatus() = runTest {
         val fake = Fake(); fake.productionStatus = true
         val repository = DeviceRepository(fake, backgroundScope)

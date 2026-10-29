@@ -5,6 +5,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CommandFormsTest {
+    @Test fun accountAcceptsOwnCoordinatesOrInheritsDevicePosition() {
+        val base = mapOf("label" to "A01", "user" to "fixture-user", "pass" to "fixture-password", "bfp" to "", "lat" to "", "lng" to "", "addr" to "")
+        val inherited = Forms.payload(Forms.account, base)
+        assertFalse("lat" in inherited)
+        assertFalse("lng" in inherited)
+        val addressOnly = Forms.payload(Forms.account, base + ("addr" to "测试 地址 A"))
+        assertFalse("lat" in addressOnly)
+        assertEquals("测试 地址 A", addressOnly["addr"]!!.jsonPrimitive.content)
+        val own = Forms.payload(Forms.account, base + mapOf("lat" to "31.2345", "lng" to "104.5678", "addr" to " 测试  地址 "))
+        assertEquals(31.2345, own["lat"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(104.5678, own["lng"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(" 测试  地址 ", own["addr"]!!.jsonPrimitive.content)
+    }
+    @Test fun accountRejectsPartialOrInvalidCoordinates() {
+        val base = mapOf("label" to "A01", "user" to "fixture-user", "pass" to "fixture-password", "bfp" to "")
+        for (values in listOf(mapOf("lat" to "31"), mapOf("lng" to "104"), mapOf("lat" to "NaN", "lng" to "104"),
+            mapOf("lat" to "91", "lng" to "104"), mapOf("lat" to "31", "lng" to "181"), mapOf("lat" to "0", "lng" to "104"))) {
+            assertThrows(Exception::class.java) { Forms.payload(Forms.account, base + values) }
+        }
+    }
     @Test fun openWifiAndSpacesArePreserved() {
         val payload = Forms.payload(Forms.wifi, mapOf("ssid" to "room wifi", "pass" to ""))
         assertEquals("", payload["pass"]!!.jsonPrimitive.content)

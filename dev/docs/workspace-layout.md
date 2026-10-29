@@ -25,6 +25,6 @@ v0.6.0/v0.7.0 的 `.stage` 历史中间目录移到 `release/.staging/v0.6.0/` �
 
 - 新文件按已有模块职责归位。不要在根目录新增临时报告、构建日志或带版本号的散装二进制。
 - 更新文档、脚本中的路径后运行 `python tools/check_project.py` 与 `git diff --check`。
-- 仅目录和文档调整无需重建固件/APK；检查本地包仍用 `python tools/check_project.py --release-dir release/v0.7.0`，不要因此重新打包覆盖原资产。
+- 仅目录和文档调整无需重建固件/APK；当前包用 `python tools/check_project.py --release-dir release/v0.8.0` 检查；历史包只能与对应源码 / 清单核对，不应因目录调整重新打包覆盖原资产。
 - 历史已跟踪资产迁移后须检查新路径未被忽略；新增输出继续忽略。提交时核对删除/新增配对，Git 会按内容识别重命名。
 - 需要清理 SDK、缓存、历史构建或运行数据时另行明确范围；本次整理不删除、不移动可能含秘密的运行配置，也不修改 GitHub 发行。

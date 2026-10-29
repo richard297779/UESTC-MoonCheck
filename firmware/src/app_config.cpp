@@ -334,7 +334,7 @@ void AppConfig::applyProfile(const CheckinProfile& profile) {
   if (profile.hasLocation()) {
     m_location.latitude = profile.latitude;
     m_location.longitude = profile.longitude;
-    if (profile.address.length() > 0) m_location.address = profile.address;
+    m_location.address = profile.address;
   }
   if (m_mutex) xSemaphoreGive(m_mutex);
   // 注意：**不写 NVS** —— 全局配置只是"没有账号表时"的兜底，执行器按账号运行期切换。
@@ -354,6 +354,18 @@ CheckinProfile AppConfig::deviceProfile() const {
   profile.longitude = m_location.longitude;
   profile.address = m_location.address;
   return profile;
+}
+
+CheckinProfile AppConfig::storedProfile() {
+  CheckinProfile p;
+  p.label = "device";
+  p.studentId = getStringSafe(m_prefs, kNvsAuthUser, "");
+  p.password = getStringSafe(m_prefs, kNvsAuthPass, "");
+  p.fingerprint = getStringSafe(m_prefs, kNvsAuthBfp, "");
+  p.latitude = m_prefs.getDouble(kNvsLocLat, kDefaultLatitude);
+  p.longitude = m_prefs.getDouble(kNvsLocLng, kDefaultLongitude);
+  p.address = getStringSafe(m_prefs, kNvsLocAddr, kDefaultAddress);
+  return p;
 }
 
 Result AppConfig::setMultiGapSeconds(uint16_t seconds) {

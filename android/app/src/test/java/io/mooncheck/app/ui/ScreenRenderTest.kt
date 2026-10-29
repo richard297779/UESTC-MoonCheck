@@ -71,7 +71,7 @@ class ScreenRenderTest {
         compose.onNodeWithText("随时有帮助").assertIsDisplayed(); capture("05-help")
         compose.onNode(hasSetTextAction()).performTextInput("微信授权与到期时间")
         compose.onNode(hasText("微信授权与到期时间") and hasSetTextAction().not()).performClick()
-        compose.onNodeWithText("每个账号需要本人", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("内置扫码需要手机联网", substring = true).performScrollTo().assertIsDisplayed()
     }
     @Test fun runtimeStatusAndDeveloperOptionsAreAccessible() {
         launch(true)

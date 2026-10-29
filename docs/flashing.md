@@ -2,7 +2,7 @@
 
 > 如果已经有支持当前平台要求的固件文件，不需要安装 PlatformIO 或编译；用 Chrome / Edge 的网页烧录工具即可，全程约 3 分钟。
 >
-> **当前发行版本：v0.7.0（修正版已获用户实测确认；新增四板型未经实测）。** 从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.7.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK；APK 安装到手机，不能当成固件刷入开发板。
+> **当前发行版本：v0.8.0（用户确认基本功能；四实验板型未经实测）。** 从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK 和电脑 BLE 控制台源码；APK 安装到手机，不能当成固件刷入开发板。
 
 ---
 
@@ -75,7 +75,7 @@ Hard resetting via RTS pin...
 3. 文件表里**只填一行**：地址 `0x10000`，文件 `firmware.bin`。
 4. Program → 完成后 Disconnect + RST。
 
-WiFi、账号表、坐标、通知地址全部保留，不需要重新配置。
+同板型且分区表相同时，WiFi、账号表、坐标、通知地址保留；从 0.7.0 升到 0.8.0 后同步更新 APK / 电脑 BLE 源码，以使用新账号能力。
 
 ---
 

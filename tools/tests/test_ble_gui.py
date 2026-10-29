@@ -13,6 +13,26 @@ def spec(operation):
 
 
 class Forms(unittest.TestCase):
+    def test_account_location_is_optional_and_preserves_address_spaces(self):
+        base = dict(label='A01', user='fixture-user', **{'pass': 'fixture-password'}, bfp='', lat='', lng='', addr='')
+        inherited = build_payload(spec('account.add'), base)
+        self.assertNotIn('lat', inherited)
+        self.assertNotIn('lng', inherited)
+        address_only = build_payload(spec('account.add'), dict(base, addr='测试 地址 A'))
+        self.assertNotIn('lat', address_only)
+        self.assertEqual(address_only['addr'], '测试 地址 A')
+        own = build_payload(spec('account.add'), dict(base, lat='31.2345', lng='104.5678', addr=' 测试  地址 '))
+        self.assertEqual(own['lat'], 31.2345)
+        self.assertEqual(own['lng'], 104.5678)
+        self.assertEqual(own['addr'], ' 测试  地址 ')
+
+    def test_account_rejects_partial_or_invalid_coordinates(self):
+        base = dict(label='A01', user='fixture-user', **{'pass': 'fixture-password'}, bfp='', lat='', lng='', addr='')
+        for fields in (dict(lat='31.2'), dict(lng='104.5'), dict(lat='NaN', lng='104'),
+                       dict(lat='91', lng='104'), dict(lat='31', lng='181'), dict(lat='0', lng='104')):
+            with self.assertRaises(ValueError):
+                build_payload(spec('account.add'), dict(base, **fields))
+
     def test_defaults_come_from_device_without_secrets(self):
         snapshot = {"cfg": {"wifiSsid": "actual wifi", "user": "masked", "pass": "secret",
                             "schedule": {"checkinAt": "22:17", "autoDaily": True}}}
@@ -60,6 +80,15 @@ class Requests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(.01)
         self.session._on_notify(None, json.dumps(message).encode())
         return await task
+
+    async def test_nested_patch_secret_and_snapshot_user_do_not_leak_to_logs(self):
+        await self.reply({"op":"account.patch","fields":{"pass":"nested-fixture-secret"}},
+                         {"id":1,"evt":"ok","msg":"failure nested-fixture-secret"})
+        self.assertNotIn("nested-fixture-secret","\n".join(self.output))
+        messages=[];self.session.on_message=messages.append
+        self.session._print_json(json.dumps({"msg":"account snapshot","data":{"accounts":[{"user":"fixture-full-student"}]}}))
+        self.assertNotIn("fixture-full-student","\n".join(self.output))
+        self.assertEqual(messages[-1]["data"]["accounts"][0]["user"],"fixture-full-student")
 
     async def test_handshake_negotiates_and_matches_id(self):
         message = await self.reply({"op": "hello"}, {"id": 1, "evt": "ok", "data": {"maxCommandBytes": 4095}})
@@ -114,6 +143,12 @@ class Window(unittest.TestCase):
         self.assertEqual(wifi_form["vars"]["ssid"].get(), "unsaved edit")
         app.consume_message({"msg": "accounts", "data": [{"label": "A01", "user": "1234******", "enabled": True}]})
         self.assertEqual(len(app.account_table.get_children()), 1)
+        wx_form = next(s for s in app.forms if any(x[1] == "wx.import" for x in s["specs"]))
+        wx_form["choice"].current(next(i for i, x in enumerate(wx_form["specs"]) if x[1] == "wx.import"))
+        app.render(wx_form)
+        wx_form["vars"]["access"].set("fixture-previous-slot")
+        wx_form["vars"]["slot"].set("2")
+        self.assertEqual(wx_form["vars"]["access"].get(), "")
         for state in app.forms:
             for index in range(len(state["specs"])):
                 state["choice"].current(index)

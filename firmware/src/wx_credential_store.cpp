@@ -59,8 +59,10 @@ Result CredentialStore::save(size_t slot, const OauthCredentials& cred) {
 
 Result CredentialStore::remove(size_t slot) {
   if (slot >= kMaxSlots || m_prefs == nullptr) return Result::InvalidParam;
-  static_cast<Preferences*>(m_prefs)->remove(keyFor(slot).c_str());
-  return Result::Ok;
+  auto* prefs = static_cast<Preferences*>(m_prefs);
+  const String key = keyFor(slot);
+  if (!prefs->isKey(key.c_str())) return Result::Ok;
+  return prefs->remove(key.c_str()) ? Result::Ok : Result::StorageError;
 }
 
 String CredentialStore::summary() const {

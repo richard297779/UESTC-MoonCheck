@@ -50,6 +50,10 @@ class AccountStore {
 
   /// @brief 新增或按 label 覆盖一个账号（超出上限返回 InvalidParam）。
   Result addOrUpdate(const CheckinProfile& profile);
+  Result replaceAt(size_t index, const CheckinProfile& profile);
+  uint32_t revision() const { return m_revision; }
+  void invalidateRevision() { ++m_revision; }
+  String toJsonDetails() const;
   /// @brief 单独开关某个账号是否参与打卡（不改动其它字段）。
   Result setEnabled(const String& label, bool enabled);
   /// @brief 启用中的账号数（禁用的不参与打卡，也不计入成功判定分母）。
@@ -76,4 +80,5 @@ class AccountStore {
   Preferences m_prefs;
   bool m_opened = false;
   SemaphoreHandle_t m_mutex = nullptr;
+  uint32_t m_revision = 1;
 };

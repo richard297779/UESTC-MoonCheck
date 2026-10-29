@@ -1,4 +1,6 @@
-# MoonCheck Desktop 1.1.0 与电脑 BLE GUI 预发行
+# MoonCheck Desktop 1.1.0 与电脑 BLE GUI 预发行（历史记录）
+
+此文记录 desktop-v1.1.0 当时的发布；当前新版 BLE 界面、配套固件与 APK 已随 v0.8.0 发行，见[电脑 BLE 指南](../../docs/ble-gui.md)。独立打卡程序仍保持本记录的版本与验证范围。
 
 本轮以独立标签 `desktop-v1.1.0` 发布。固件 / Android 仍为 0.7.0，既有标签、资产和 Latest 标记保持不变。桌面程序和 BLE GUI 尚未完成真实账号 / 设备联调，使用 GitHub Prerelease，不把旧版实测结论视为本版验收。
 

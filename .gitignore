@@ -32,6 +32,8 @@ firmware/.pio/
 # ============================================================================
 __pycache__/
 *.pyc
+hs_err_pid*.log
+replay_pid*.log
 .venv/
 venv/
 
@@ -62,6 +64,7 @@ android/keystore.properties
 !/release/v0.4.0/notes-0.4.0.md
 !/release/v0.5.0/notes-0.5.0.md
 !/release/v0.7.0/CHANGELOG.md
+!/release/v0.8.0/CHANGELOG.md
 !/release/v0.5.1/sha256.txt
 !/release/v0.3.0/wanan-0.3.0-s3-n16r8-full.zip
 !/release/v0.3.0/wanan-0.3.0-wroom32-4mb-full.zip

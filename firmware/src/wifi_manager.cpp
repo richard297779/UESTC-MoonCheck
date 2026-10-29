@@ -1,3 +1,4 @@
+#include <ArduinoJson.h>
 // ============================================================================
 //  WifiManager 实现
 // ============================================================================
@@ -179,23 +180,16 @@ Result WifiManager::scan(String& outJson) {
     outJson = "[]";
     return Result::NetworkError;
   }
-  outJson = "[";
-  for (int i = 0; i < count; i++) {
-    if (i > 0) outJson += ',';
-    outJson += "{\"ssid\":\"";
-    outJson += WiFi.SSID(i);
-    outJson += "\",\"rssi\":";
-    outJson += String(WiFi.RSSI(i));
-    outJson += ",\"channel\":";
-    outJson += String(WiFi.channel(i));
-    outJson += ",\"enc\":";
-    outJson += String(static_cast<int>(WiFi.encryptionType(i)));
-    outJson += ",\"bssid\":\"";
-    outJson += WiFi.BSSIDstr(i);
-    outJson += '\"';
-    outJson += '}';
+  JsonDocument doc;
+  JsonArray aps=doc.to<JsonArray>();
+  for (int i=0;i<count;++i) {
+    JsonObject ap=aps.add<JsonObject>();
+    ap["ssid"]=WiFi.SSID(i); ap["rssi"]=WiFi.RSSI(i);
+    ap["channel"]=WiFi.channel(i); ap["enc"]=static_cast<int>(WiFi.encryptionType(i));
+    ap["bssid"]=WiFi.BSSIDstr(i);
   }
-  outJson += ']';
+  if (doc.overflowed()) { WiFi.scanDelete(); return Result::InternalError; }
+  serializeJson(doc,outJson);
   WiFi.scanDelete();
   LOG_I(kTag, "scan done: %d ap", count);
   return Result::Ok;

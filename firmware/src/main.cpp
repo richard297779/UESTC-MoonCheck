@@ -1,3 +1,4 @@
+#include "account_selection.h"
 // ============================================================================
 //  main：启动编排
 //    1) 日志 → 2) 配置 → 3) LED → 4) 蓝牙（最先行，任何失败都能被手机看到）
@@ -183,17 +184,9 @@ void setup() {
   // 打卡服务取票回调：当前账号（applyProfile 后 auth.user）→ 凭据槽位
   g_checkin.setWxTicketProvider([](String& outTicket, String& outError) -> Result {
     const String user = g_config.auth().studentId;
-    const size_t count = g_accounts.count();
-    int slot = 0;
-    for (size_t index = 0; index < count; index++) {
-      CheckinProfile profile;
-      if (!g_accounts.get(index, profile)) continue;
-      if (profile.studentId == user) {
-        slot = static_cast<int>(index);
-        break;
-      }
-    }  // 表为空或未命中时用设备自身配置 = 槽位 0
-    LOG_I("wx_ticket", "provider: user=%.8s -> slot %d", user.c_str(), slot);
+    const int slot=activeAuthorizationSlot<CheckinProfile>(g_accounts,g_config.activeAccount(),user);
+    if(slot<0) { outError="active account has no matching authorization slot"; return Result::NotReady; }
+    LOG_I("wx_ticket", "provider: active account -> slot %d", slot);
     return g_router.ensureWxTicket(slot, outTicket, outError);
   });
   g_router.begin(g_config, g_cookies, g_wifi, g_time, g_auth, g_api, g_http, g_checkin, g_ble,

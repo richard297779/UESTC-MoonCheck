@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import zipfile
 
+from package_ble_console import build_archive
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -31,33 +33,9 @@ def main():
         for name, expected in manifest['sourceFiles'].items():
             assert digest((ROOT / 'desktop' / name).read_bytes()) == expected, 'Desktop source differs from executable build'
     shutil.copyfile(desktop, output / desktop.name)
-    ble_sources = ['tools/ble_console.py', 'tools/ble_console.pyw', 'tools/ble_gui.py', 'tools/requirements-ble.txt']
-    files = {name: (ROOT / name).read_bytes() for name in ble_sources}
-    files['LICENSE'] = (ROOT / 'LICENSE').read_bytes()
-    files['PACKAGE.md'] = f'''# MoonCheck 电脑 BLE 图形控制台（配套 Desktop {version}）
-
-此工具通过 BLE 控制 ESP32，与独立运行的 MoonCheck.exe 是两个程序。
-需安装 Python 3.10+（含 tkinter），在解压根目录执行：
-
-    python -m pip install -r tools/requirements-ble.txt
-
-然后双击 tools/ble_console.pyw（关联 Python 的 pythonw.exe），或执行：
-
-    python tools/ble_console.py --gui
-
-扫描后核对地址并连接。设备概览、账号列表和设置默认值由设备查询获取；完整回执和 JSON 默认收于开发者选项。
-密码与令牌不回填，不持久化日志。真实打卡、通知、调度等操作须谨慎确认。GUI BLE 实机联调尚待验证。
-建议配合固件 0.7.0；不要把固件/APK 的用户验收结论沿用到此 GUI。
-说明：https://github.com/richard297779/UESTC-MoonCheck/blob/{tag}/docs/ble-gui.md
-SHA-256 与源码来源见 manifest.json。依赖 bleak 通过 pip 单独安装，本包不包含第三方库或本机配置。
-'''.encode()
-    files['manifest.json'] = (json.dumps(dict(version=version, component='ble-console-source',
-        firmwareCompatibility='0.7.0 / protocol 1', sourceCommit=commit, sourceDirty=False,
-        files=[dict(name=name, size=len(data), sha256=digest(data)) for name, data in files.items()]), indent=2) + '\n').encode()
-    ble = output / ('MoonCheck-BLE-Console-' + version + '-source.zip')
-    with zipfile.ZipFile(ble, 'w', zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
+    ble_version = (ROOT / 'VERSION').read_text().strip()
+    ble = output / f'MoonCheck-{ble_version}-ble-console-source.zip'
+    build_archive(ble, ble_version, commit, False)
     assets = [output / desktop.name, ble]
     release_manifest = dict(version=version, tag=tag, sourceCommit=commit, sourceDirty=False,
         kind='prerelease', firmwareVersion=(ROOT / 'VERSION').read_text().strip(),

@@ -1,6 +1,6 @@
 # 自行编译固件
 
-> 发行版本 v0.7.0，修正版已获用户实测可行确认，具体测试板型未说明，新增四型号未经实机验证；详见[板型支持矩阵](../docs/board-support.md)。当前 Latest 为 v0.7.0。可直接下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.7.0)，或按本文自行构建。发行包同时附带 Android BLE 控制端测试 APK。
+> 发行版本 v0.8.0（Latest），用户确认基本功能已查验无误；具体逐设备明细未提供，其他四型号仍未经实际验证。详见[板型支持矩阵](../docs/board-support.md)。下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0)含固件、Android Debug APK 与电脑 BLE 控制台源码。
 
 ---
 
@@ -75,7 +75,7 @@ wx test 0
 
 ```text
 I main: === WANAN checkin device booting ===
-I main: firmware 0.7.0, built ...
+I main: firmware 0.8.0, built ...
 I logger: logger ready (ring=ok)
 I app_config: config loaded: ready=0 user=unset bfp=0
 I status_led: led ready: pin=48 rgb=1
@@ -141,3 +141,9 @@ I main: setup done, free heap=... B, psram=...
 ## v0.7.0 运行状态
 
 `status` 新增 `runtime`（内部堆当前/最低可用、分配器使用峰值、最大连续块、PSRAM、网络任务栈最低余量、开机秒数、boardId）及 `net.ssid`（实际连接网络）。统计重启后重新开始，内部堆不含 PSRAM。`logs` 限制 1–60 行，固件与 APK 均隐藏敏感日志；Android 运行状态页可查看。新环境构建结束生成 `board-build.json` 供打包交叉核对。
+
+## v0.8.0 安全账号与指定执行
+
+hello.caps 增加 account-v2 / selected-execution。新快照提供完整账号学号与配置摘要，客户端诊断仍脱敏；账号补丁按非空字段合并并核对修订号，改学号清授权，删除 / 清空先清全部授权。指定执行逐账号隔离会话、票据和位置。微信定时预取也按当前标签与身份映射槽位，不再固定取槽位 0。详细字段见 [BLE 协议](../dev/docs/ble-protocol.md)。
+
+构建脚本对源码与 Arduino 库使用 GCC 路径映射，避免新固件包含本机用户名路径；历史发行二进制不改写。新增工具 `tools/test_account_patch.py` 直接编译生产合并、目标选择与授权槽位函数。
