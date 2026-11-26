@@ -34,7 +34,9 @@
     },
     "cfg": {
       "schedule": {
-        "autoDaily": false
+        "autoDaily": false,
+        "groupReport": true,
+        "windowStart": "20:30"
       },
       "wifiSsid": "fixture"
     },

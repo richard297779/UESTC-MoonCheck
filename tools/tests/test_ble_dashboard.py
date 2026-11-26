@@ -53,6 +53,39 @@ class DashboardLayout(unittest.TestCase):
         self.app.display_result(dict(data=dict(aps=[dict(ssid='same',bssid='a'),dict(ssid='same',bssid='b'),dict(ssid='',bssid='c')])))
         self.assertEqual(len(self.app.result_table.get_children()),3)
 
+    def test_group_mode_loads_device_value_and_requires_confirmation(self):
+        self.select('调度与执行', 'group.mode')
+        app = self.app
+        with patch('ble_dashboard.messagebox.showerror') as old:
+            app.send_current()
+            old.assert_called_once()
+        self.assertEqual(app.backend.request.call_count, 0)
+        app.consume(dict(msg='status', data=dict(cfg=dict(schedule=dict(groupReport=True)))))
+        self.assertTrue(app.state['vars']['enabled'].get())
+        app.state['vars']['enabled'].set(False)
+        with patch('ble_dashboard.messagebox.askyesno', return_value=False), patch.object(app, 'execute_payload') as send:
+            app.send_current()
+            send.assert_not_called()
+        with patch('ble_dashboard.messagebox.askyesno', return_value=True), patch.object(app, 'execute_payload') as send:
+            app.send_current()
+            send.assert_called_once_with({'op': 'group.mode', 'enabled': False})
+        app.consume(dict(evt='ok', _operation='group.mode', data=dict(enabled=False)))
+        app.consume(dict(msg='status', data=dict(cfg=dict(schedule=dict(groupReport=False)))))
+        self.assertFalse(app.state['vars']['enabled'].get())
+
+    def test_probe_and_selected_login_display_group_count(self):
+        app = self.app
+        probe = dict(recordStatusCode='GROUP_CLEAR', sessionValid=True, groupPendingCount=0)
+        app.display_result(dict(evt='ok', _operation='test.probe', data=probe))
+        results = [app.result_table.item(row, 'values') for row in app.result_table.get_children()]
+        self.assertIn(('小组待确认人数', '0'), results)
+        app.display_result(dict(evt='ok', _operation='test.probe', data=dict(probe, sessionValid=False)))
+        results = [app.result_table.item(row, 'values') for row in app.result_table.get_children()]
+        self.assertFalse(any(row[0] == '小组待确认人数' for row in results))
+        app.display_result(dict(evt='ok', _operation='test.login', data=dict(accounts=[
+            dict(label='A', operation='test.login', ok=True, data=probe)])))
+        self.assertEqual(app.result_table.item(app.result_table.get_children()[0], 'values')[3], '小组待确认人数 0')
+
     def test_device_defaults_update_only_clean_form(self):
         self.select('网络','wifi.set');app=self.app
         app.consume(dict(msg='status',data=dict(cfg=dict(wifiSsid='device wifi'))))

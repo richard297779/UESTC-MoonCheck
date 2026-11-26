@@ -424,19 +424,20 @@ String AppConfig::toJsonSummary() const {
     maskedUser = maskedUser.substring(0, 4) + "******";
   }
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  char buffer[704];
+  char buffer[768];
   snprintf(buffer, sizeof(buffer),
            "{\"device\":\"%s\",\"account\":\"%s\",\"label\":\"%s\",\"wifiSsid\":\"%s\",\"wifiConfigured\":%s,\"user\":\"%s\","
            "\"passwordSet\":%s,\"fingerprintSet\":%s,"
            "\"location\":{\"lat\":%.6f,\"lng\":%.6f,\"address\":\"%s\"},"
-           "\"schedule\":{\"checkinAt\":\"%s\",\"windowEnd\":\"%s\",\"jitterSeconds\":%u,"
+           "\"schedule\":{\"checkinAt\":\"%s\",\"windowStart\":\"%s\",\"windowEnd\":\"%s\",\"jitterSeconds\":%u,"
            "\"autoDaily\":%s,\"groupReport\":%s},\"accountGap\":%u,"
            "\"notifyOn\":%s,\"notifyStyle\":\"%s\",\"notifyUrl\":\"%s\"}",
            bleDeviceName().c_str(), m_activeLabel.c_str(), m_deviceLabel.c_str(),
            m_wifi.ssid.c_str(), m_wifi.isConfigured() ? "true" : "false", maskedUser.c_str(),
            m_auth.password.length() ? "true" : "false", m_auth.hasFingerprint() ? "true" : "false",
            m_location.latitude, m_location.longitude, m_location.address.c_str(),
-           m_schedule.checkinAt.c_str(), m_schedule.windowEnd.c_str(), m_schedule.jitterSeconds,
+           m_schedule.checkinAt.c_str(), m_schedule.windowStart.c_str(),
+           m_schedule.windowEnd.c_str(), m_schedule.jitterSeconds,
            m_schedule.autoDailyEnabled ? "true" : "false",
            groupReportEnabled() ? "true" : "false", m_multiGapSeconds,
             m_notifyEnabled ? "true" : "false",

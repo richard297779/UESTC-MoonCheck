@@ -98,7 +98,9 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                         Section("基础检查") {
                             ActionRow("查看设备时间", "检查校时与当前窗口", Icons.Rounded.Schedule, enabled) { execute("时间检查", "test.time") }
                             ActionRow("网络连通检查", "由设备访问 generate_204", Icons.Rounded.NetworkCheck, enabled) { execute("网络检查", "test.http", buildJsonObject { put("url", "http://connect.rom.miui.com/generate_204") }, 120000) }
-                            ActionRow("微信取票测试", "只测试，不提交打卡", Icons.Rounded.VerifiedUser, enabled) { pick(Forms.wxTest) }
+                            if (state.groupReport != true) {
+                                ActionRow("微信取票测试", "验证个人定位模式的取票链路", Icons.Rounded.VerifiedUser, enabled) { pick(Forms.wxTest) }
+                            }
                             ActionRow("全链路检查", "可能登录平台，不提交打卡", Icons.Rounded.Route, enabled) { pick(Forms.chain) }
                             ActionRow("开发者日志", "查看脱敏日志与内存状态", Icons.AutoMirrored.Rounded.Article, true) { runtimePage = true; developer = false }
                         }
@@ -117,13 +119,18 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                         }
                         Section("快捷操作") {
                             ActionRow("运行状态", "网络名称、内存峰值与开发者日志", Icons.Rounded.Memory, true) { runtimePage = true }
-                            ActionRow("设备体检", "检查当前会话和前置状态", Icons.Rounded.HealthAndSafety, enabled) { execute("设备体检", "test.probe", timeout = 120000) }
-                            ActionRow("手动提交打卡", "会真实提交，执行前请确认", Icons.Rounded.TaskAlt, enabled) {
-                                confirm = ConfirmAction("提交本次打卡？", "将向当前设备发送真实提交指令。默认遵守时间窗口且不跳过今日已提交检查。请确认设备与账号正确。") {
-                                    execute("手动打卡", "test.checkin", buildJsonObject { put("force", false) }, 120000)
+                            val probeDescription = if (state.groupReport == true) "检查安全员会话和待确认人数" else "检查当前会话和前置状态"
+                            ActionRow("设备体检", probeDescription, Icons.Rounded.HealthAndSafety, enabled) { execute("设备体检", "test.probe", timeout = 120000) }
+                            val submitTitle = if (state.groupReport == true) "手动小组确认" else "手动提交打卡"
+                            ActionRow(submitTitle, "会真实提交，执行前请确认", Icons.Rounded.TaskAlt, enabled) {
+                                val detail = if (state.groupReport == true)
+                                    "设备将在窗口内批量确认当前安全员账号下符合条件的记录。发现组员联系不上时，请先在网页上报异常。"
+                                else "设备将在窗口内提交个人打卡，并核对今日记录。请确认设备与账号正确。"
+                                confirm = ConfirmAction("提交本次打卡？", detail) {
+                                    execute(submitTitle, "test.checkin", buildJsonObject { put("force", false) }, 120000)
                                 }
                             }
-                            ActionRow("诊断与最近活动", "网络、取票、链路检查", Icons.AutoMirrored.Rounded.ManageSearch, true) { diagnostics = true }
+                            ActionRow("诊断与最近活动", "网络与平台链路检查", Icons.AutoMirrored.Rounded.ManageSearch, true) { diagnostics = true }
                         }
                         Section("最近结果") {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -134,22 +141,55 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                                 }
                             }
                         }
-                        Note("第一次使用？", "在配置页完成 5 个步骤，再验证授权并开启自动任务。", Icons.Rounded.AutoAwesome) { tab = 1 }
+                        Note("第一次使用？", "在配置页选择打卡模式、完成设置并开启自动任务。", Icons.Rounded.AutoAwesome) { tab = 1 }
                     }
                     1 -> {
                         PageHeading("一次配置，安心运行", "每一步独立保存，以设备回执确认")
-                        val steps = listOf(Forms.wifi, Forms.auth, Forms.wx, Forms.location, Forms.schedule)
-                        val descriptions = listOf("让设备接入宿舍的 2.4 GHz 网络", "学号、密码与浏览器指纹", "本人授权凭据与对应槽位", "现场确认的纬度、经度和地址", "设置时间、截止窗口与随机抖动")
-                        Section("配置向导 · 本次连接已完成 ${state.configured.size.coerceAtMost(5)}/5") {
-                            steps.forEachIndexed { index, step ->
-                                ActionRow(step.title, descriptions[index], if (step.step in state.configured) Icons.Rounded.CheckCircle else listOf(Icons.Rounded.Wifi, Icons.Rounded.PersonOutline, Icons.Rounded.VerifiedUser, Icons.Rounded.LocationOn, Icons.Rounded.Schedule)[index], enabled, badge = "0${index + 1}") { pick(step) }
+                        Section("打卡模式") {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("安全员小组确认", style = MaterialTheme.typography.titleMedium)
+                                    Text(when (state.groupReport) {
+                                        true -> "已启用 · 适用于设备上所有启用账号"
+                                        false -> "当前使用个人定位"
+                                        null -> if (state.ready) "设备未提供模式切换" else "连接设备后读取模式"
+                                    }, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Switch(checked = state.groupReport == true, enabled = enabled && state.groupReport != null,
+                                    onCheckedChange = { on ->
+                                        val mode = if (on) "安全员小组确认" else "个人定位"
+                                        confirm = ConfirmAction("切换到$mode？", "此设置适用于设备上的所有启用账号，并用于后续自动任务。") {
+                                            execute("切换打卡模式", "group.mode", buildJsonObject { put("enabled", on) })
+                                        }
+                                    })
+                            }
+                        }
+                        val steps = buildList {
+                            add(Triple(Forms.wifi, "让设备接入宿舍的 2.4 GHz 网络", Icons.Rounded.Wifi))
+                            add(Triple(Forms.auth, "学号、密码与浏览器指纹", Icons.Rounded.PersonOutline))
+                            if (state.groupReport != true) {
+                                add(Triple(Forms.wx, "本人授权凭据与对应槽位", Icons.Rounded.VerifiedUser))
+                                add(Triple(Forms.location, "现场确认的纬度、经度和地址", Icons.Rounded.LocationOn))
+                            }
+                            val schedule = if (state.groupReport == true) Forms.groupSchedule else Forms.schedule
+                            add(Triple(schedule, "设置时间、截止窗口与随机抖动", Icons.Rounded.Schedule))
+                        }
+                        val saved = steps.count { it.first.step in state.configured }
+                        Section("配置向导 · 本次连接已完成 $saved/${steps.size}") {
+                            steps.forEachIndexed { index, (step, description, icon) ->
+                                ActionRow(step.title, description, if (step.step in state.configured) Icons.Rounded.CheckCircle else icon, enabled, badge = "0${index + 1}") { pick(step) }
                             }
                         }
                         Section("每日自动任务") {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) { Text("自动运行", style = MaterialTheme.typography.titleMedium); Text("设备独立执行，无需手机常驻", style = MaterialTheme.typography.bodySmall) }
                                 Switch(checked = state.ready && state.auto, enabled = enabled, onCheckedChange = { on ->
-                                    confirm = ConfirmAction(if (on) "开启每日自动任务？" else "暂停每日自动任务？", if (on) "请确认 WiFi、本人账号、微信授权、宿舍坐标和计划已在设备保存，且体检与取票测试通过。已有配置可直接确认，无需每次重新填写。" else "暂停后设备不会执行每日自动打卡；保存的配置会保留。") {
+                                    val detail = when {
+                                        !on -> "暂停后设备将保留已保存的配置。"
+                                        state.groupReport == true -> "请确认 WiFi、安全员账号和计划已保存，且设备体检能读取待确认人数。"
+                                        else -> "请确认 WiFi、本人账号、微信授权、宿舍坐标和计划已保存，且体检与取票测试通过。"
+                                    }
+                                    confirm = ConfirmAction(if (on) "开启每日自动任务？" else "暂停每日自动任务？", detail) {
                                         execute(if (on) "开启自动任务" else "暂停自动任务", "auto.set", buildJsonObject { put("enabled", on) })
                                     }
                                 })
@@ -338,7 +378,19 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
 }
 
 @Composable private fun CommandSheet(form: CommandForm, link: LinkState, state: DeviceSnapshot, submit: (CommandForm, Map<String, String>) -> Unit, dismiss: () -> Unit) {
-    val values = remember(form) { mutableStateMapOf<String, String>().apply { form.inputs.forEach { put(it.key, it.initial) };put("_revision",state.accountRevision?.toString().orEmpty());put("slot","0") } }
+    val values = remember(form) {
+        mutableStateMapOf<String, String>().apply {
+            form.inputs.forEach { put(it.key, it.initial) }
+            put("_revision", state.accountRevision?.toString().orEmpty())
+            put("slot", "0")
+            if (form.op == "sched.set") {
+                put("at", state.at)
+                put("window_end", state.end)
+                state.windowStart?.let { if ("window_start" in this) put("window_start", it) }
+                state.jitterSeconds?.let { put("jitter_s", it.toString()) }
+            }
+        }
+    }
     val clearWx: () -> Unit = {
         listOf("openid", "access", "refresh").forEach { values[it] = "" }
         values["expiresAt"] = "0"

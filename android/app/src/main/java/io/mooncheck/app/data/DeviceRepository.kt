@@ -18,13 +18,23 @@ data class DeviceSnapshot(
     val logDropped: Long = 0, val statusReadAt: Long = 0,
     val wifi: String = "未读取", val wifiConnected: Boolean = false, val synced: Boolean = false,
     val time: String = "—", val auto: Boolean = false, val at: String = "22:00",
-    val end: String = "23:30", val lastDate: String = "—", val lastOk: Boolean? = null,
+    val end: String = "23:30", val groupReport: Boolean? = null,
+    val windowStart: String? = null, val jitterSeconds: Int? = null,
+    val lastDate: String = "—", val lastOk: Boolean? = null,
     val configured: Set<String> = emptySet(), val accounts: List<Account> = emptyList(),
     val slots: Set<Int> = emptySet(), val networks: List<String> = emptyList(),
     val notifyEnabled: Boolean = false, val channels: List<NotifyChannel> = emptyList(),
     val events: List<String> = emptyList(), val busy: Boolean = false, val action: String = "",
     val message: String = "连接设备后，即可查看状态与使用快捷操作。", val error: Boolean = false
 )
+
+private fun groupPendingCount(data: JsonObject): Int? {
+    if ((data["sessionValid"] as? JsonPrimitive)?.booleanOrNull == false) return null
+    val status = data.text("recordStatusCode", data.text("today", ""))
+    if (status !in setOf("GROUP_PENDING", "GROUP_CLEAR")) return null
+    return (data["groupPendingCount"] as? JsonPrimitive)
+        ?.takeUnless { it.isString }?.intOrNull?.takeIf { it >= 0 }
+}
 
 /** Owns one request at a time. Only approved, non-secret fields reach UI state. */
 class DeviceRepository(val transport: DeviceTransport, private val scope: CoroutineScope) {
@@ -46,7 +56,7 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
         transport.onDisconnect = {
             generation++; assembler.reset()
             pending?.second?.completeExceptionally(IllegalStateException("连接已断开，操作结果未知")); pending = null
-            mutable.update { it.copy(ready = false, configured = emptySet(), slots = emptySet(), accounts = emptyList(), accountRevision = null, capabilities = emptySet(), wifiConnected = false, runtime = RuntimeStatus(), deviceLogs = emptyList(), logDropped = 0, statusReadAt = 0, wifi = "未连接") }
+            mutable.update { it.copy(ready = false, configured = emptySet(), slots = emptySet(), accounts = emptyList(), accountRevision = null, capabilities = emptySet(), groupReport = null, wifiConnected = false, runtime = RuntimeStatus(), deviceLogs = emptyList(), logDropped = 0, statusReadAt = 0, wifi = "未连接") }
         }
         expiry = scope.launch {
             while (isActive) {
@@ -140,6 +150,10 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
     fun notice(message: String) { mutable.update { it.copy(message = message, error = true) } }
     fun execute(title: String, op: String, fields: JsonObject = JsonObject(emptyMap()), timeout: Long = 15000, savedStep: String? = null, done: () -> Unit = {}) {
         if (!mutable.value.ready) { notice("请先在设备面板连接 MoonCheck。"); return }
+        if (op == "group.mode" && mutable.value.groupReport == null) {
+            notice("设备未提供打卡模式，请刷新状态，旧固件需升级。")
+            return
+        }
         if (!lock.tryLock()) { notice("设备正在处理上一项操作，请等待结果。"); return }
         if (mutable.value.busy) { lock.unlock(); return }
         scope.launch {
@@ -171,10 +185,15 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
                 if (savedStep != null) mutable.update { it.copy(configured = it.configured + savedStep) }
                 val selectedRows=if("targets" in fields) response.obj("data")["accounts"] as? JsonArray else null
                 val selectedFailed=selectedRows?.any { !(it as? JsonObject)?.flag("ok").let { value->value==true } } ?: false
+                val data = response.obj("data")
+                val probeFailed = op == "test.probe" && (data["sessionValid"] as? JsonPrimitive)?.booleanOrNull == false
+                val groupCount = groupPendingCount(data)
                 val detail = if(selectedRows!=null) "$title · 逐账号结果\n"+selectedRows.joinToString("\n") { entry ->
                     val row=entry as? JsonObject ?: JsonObject(emptyMap())
                     val result=if(row.text("status")=="skipped")"跳过" else if(row.flag("ok"))"通过" else "未通过"
-                    val reason=LogPrivacy.sanitize(row.text("msg","")).joinToString(" ").take(160)
+                    val count = groupPendingCount(row.obj("data"))
+                    val reason = count?.let { "小组待确认人数 $it" }
+                        ?: LogPrivacy.sanitize(row.text("msg","")).joinToString(" ").take(160)
                     "${row.text("label")} · $result · $reason"
                 } else when (op) {
                     "test.http" -> {
@@ -182,15 +201,20 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
                         if (status == 204) "网络检查返回 HTTP 204，设备网络已放行。"
                         else "网络检查返回 HTTP ${status ?: "未知"}，可能需要校园网认证，请查看帮助。"
                     }
+                    "test.probe", "test.login", "test.chain" -> when {
+                        probeFailed -> "会话不可用，请先执行登录检查。"
+                        groupCount != null -> "安全员小组确认 · 待确认人数 $groupCount"
+                        else -> "$title · 设备已确认完成"
+                    }
                     "test.time" -> "设备时间检查已完成，请刷新状态核对校时与时间。"
                     "logs" -> "已读取最近设备日志，敏感行已隐藏；日志仅保留在当前连接内。"
                     "wx.test" -> "微信取票测试通过，未提交打卡。"
                     "wifi.scan" -> "WiFi 扫描完成，可在配置页选择网络。"
                     else -> "$title · 设备已确认完成"
                 }
-                mutable.update { it.copy(message = detail, error = selectedFailed, events = (listOf(detail) + it.events).take(20)) }
+                mutable.update { it.copy(message = detail, error = selectedFailed || probeFailed, events = (listOf(detail) + it.events).take(20)) }
                 done()
-                if (op.endsWith(".set") || op in setOf("test.checkin", "test.multi")) {
+                if (op.endsWith(".set") || op in setOf("group.mode", "test.checkin", "test.multi")) {
                     try { refreshInternal() } catch (_: Exception) {
                         transport.disconnect("状态刷新未完成，请重新连接")
                         mutable.update { it.copy(message = "$title 已确认；状态刷新失败，请重连后查询，避免重复提交。", error = true) }
@@ -242,6 +266,9 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
             wifi = if (net.text("state") == "connected") net.text("ssid", "固件未提供") else "未连接", wifiConnected = net.text("state") == "connected",
             synced = net.flag("timeSynced"), time = net.text("deviceTime"),
             auto = schedule.flag("autoDaily"), at = schedule.text("checkinAt", "22:00"), end = schedule.text("windowEnd", "23:30"),
+            groupReport = (schedule["groupReport"] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull,
+            windowStart = schedule.text("windowStart", "").ifBlank { null },
+            jitterSeconds = (schedule["jitterSeconds"] as? JsonPrimitive)?.intOrNull,
             lastDate = last.text("date"), lastOk = if (last.text("date", "").isBlank()) null else last.flag("ok")
         ) }
     }

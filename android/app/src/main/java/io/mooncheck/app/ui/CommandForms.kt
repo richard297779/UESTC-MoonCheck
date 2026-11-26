@@ -22,6 +22,9 @@ object Forms {
         Input("lat", "纬度", "例如 30.xxxxxx", kind = Kind.Decimal), Input("lng", "经度", "例如 103.xxxxxx", kind = Kind.Decimal), Input("addr", "地址说明", required = false)), "location")
     val schedule = CommandForm("设置自动计划", "sched.set", "使用设备时间。保存计划不会自动开启每日任务，完成配置和验证后请主动开启。", listOf(
         Input("at", "计划时间", "HH:MM", "22:00"), Input("window_end", "截止时间", "HH:MM", "23:30"), Input("jitter_s", "随机抖动（秒）", initial = "30", kind = Kind.Int)), "schedule")
+    val groupSchedule = schedule.copy(
+        inputs = listOf(Input("window_start", "窗口开始", "HH:MM", "21:00")) + schedule.inputs
+    )
     val account = CommandForm("添加或更新账号", "account.add", "最多 6 人，需本人同意。同名标签会覆盖该账号；经纬度需成对填写，都留空则沿用设备当前坐标（覆盖也如此）。地址可单独填写；保存后核对微信槽位。", listOf(
         Input("label", "账号标签", "1–12 位字母、数字、- 或 _"), Input("user", "学号"), Input("pass", "密码", kind = Kind.Secret),
         Input("bfp", "浏览器指纹", "可留空；覆盖时请重新确认授权", kind = Kind.Secret, required = false),
@@ -78,7 +81,11 @@ object Forms {
                 return value.take(2).toInt() * 60 + value.takeLast(2).toInt()
             }
             val start = minute("at"); val end = minute("window_end")
-            require(start in 1260..1410 && end in start..1410) { "计划应在 21:00–23:30 内，截止时间不能早于计划时间" }
+            if ("window_start" in fields) {
+                require(start in minute("window_start") until end) { "计划时间应在开始与截止时间之间" }
+            } else {
+                require(start in 1260..1410 && end in start..1410) { "计划应在 21:00–23:30 内，截止时间不能早于计划时间" }
+            }
             require(number("jitter_s") in 0.0..300.0) { "抖动范围为 0–300 秒" }
         }
         if ("gap_s" in fields) require(number("gap_s") in 0.0..600.0) { "间隔范围为 0–600 秒" }

@@ -40,6 +40,12 @@ class CommandFormsTest {
             Forms.payload(Forms.schedule, mapOf("at" to at, "window_end" to end, "jitter_s" to "30"))
         }
     }
+    @Test fun groupScheduleUsesItsOwnWindow() {
+        val values = mapOf("window_start" to "19:00", "at" to "20:00", "window_end" to "21:00", "jitter_s" to "5")
+        assertEquals("19:00", Forms.payload(Forms.groupSchedule, values)["window_start"]?.jsonPrimitive?.content)
+        assertThrows(Exception::class.java) { Forms.payload(Forms.groupSchedule, values + ("at" to "18:59")) }
+        assertThrows(Exception::class.java) { Forms.payload(Forms.groupSchedule, values + ("at" to "21:00")) }
+    }
     @Test fun notificationPauseIsBooleanFalse() {
         val form = CommandForm("pause", "notify.enable", "", listOf(Input("label", "label"), Input("on", "on", kind = Kind.Choice, choices = listOf("1", "0"))))
         assertFalse(Forms.payload(form, mapOf("label" to "A01", "on" to "0"))["on"]!!.jsonPrimitive.boolean)

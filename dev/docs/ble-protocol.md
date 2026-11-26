@@ -1,6 +1,6 @@
 # v0.8.0：账号快照、合并与目标执行（2026-10-29）
 
-协议仍为 1。0.8.0 在 `hello.caps` 增加 `account-v2` 与 `selected-execution`；GitHub 已发行 v0.7.0 不具有这些能力。客户端仍按能力字段协商，不能仅凭版本字符串猜测功能。
+协议仍为 1。0.8.0 在 `hello.caps` 增加 `account-v2` 与 `selected-execution`；GitHub 已发行 v0.7.0 不具有这些能力。v0.9.0 增加 `group-report` 能力。电脑和 Android 从 `cfg.schedule.groupReport` 读取模式，该字段同时支持早期未声明能力位的 v0.9.0 本地验证构建。客户端根据回执字段识别功能，不根据版本字符串推断。
 
 - `account.snapshot` → `data.revision`（本次启动随机起点、配置变化递增的 uint32）及 `accounts`。记录含 slot、label、完整 user、enabled、passwordSet、fingerprintSet、lat/lng/addr、lastDate/lastOk/lastMsg；不返回密码、指纹、微信令牌。表为空时附 `primary`，label 为 `@primary`、slot=0。
 - `account.patch` 请求：`create`、`target`（更新前标签）、`expectedRevision`、`fields`。fields 只允许 label/user/pass/bfp/lat/lng/addr；空字符串保留。新建必须有标签、学号、密码和 32 位十六进制指纹；更新从原记录合并，成对修改坐标，地址可独立修改。单条账号表保存失败恢复内存旧值。
@@ -163,7 +163,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `loc.set` | `lat,lng[,addr]` | 写打卡坐标 | 否 |
 | `sched.set` | `at,window_end[,jitter_s,window_start]` | 写打卡时间与窗口（默认 22:00 / 21:00–23:30） | 否 |
 | `auto.set` | `enabled` | 开关每日自动打卡 | 否 |
-| `group.mode` | `enabled` 布尔值 | 设备级小组确认开关，持久化到 NVS。默认关闭，状态见 `cfg.schedule.groupReport`。适用于所有启用账号 | 否 |
+| `group.mode` | `enabled` 布尔值 | 设备级小组确认开关，持久化到 NVS。默认关闭，状态见 `cfg.schedule.groupReport`。适用于所有启用账号，成功回执 `data.enabled` 为保存的布尔值 | 否 |
 | `notify.set` | `url,style,on,gap,quota` | 配置手机通知通道（`style` 0=GET 模板 1=POST 文本 2=POST JSON）；`url` 含 token，回执只输出脱敏形式。详见 `docs/notify-design.md` | 否 |
 | `notify.status` | — | 通知开关 / 格式 / 脱敏 URL / 今日已发 / 队列长度 / 重试轮次 | 否 |
 | `test.notify` | `body?` | **立即真发一条**（不入队、不受去重与配额限制），用来验证通道 | 是 |
@@ -183,9 +183,11 @@ code=123456                          // 纯文本形式（同样接受）
 | `test.http` | `url` | 访问任意 URL：状态码 / 字节数 / 耗时 / 是否命中关键字 | 是 |
 | `test.login` | `force?` | 登录链路测试；**默认只在窗口内登录**（会话 TTL≈1 h 且打卡只接受窗口内，窗口外登录会白烧一次登录次数），`force=true` 才强制。授权本身与窗口无关，靠门户预热 `GET /api/isLoginFailure`（`docs/api-contract.md` §8.7） | 是 |
 | `test.chain` | `wait_s?,force?` | **全链路自检**：网络/校时 → 登录页 → 登录 → **进入微应用** → 业务接口；`wait_s` 秒内每 30 s 重探放行（≤900） | 是 |
-| `test.probe` | — | 只读体检。个人模式查状态与打卡窗口，小组模式查安全员会话与 `groupPendingCount` | 是 |
+| `test.probe` | — | 只读体检。个人模式查状态与打卡窗口，小组模式查安全员会话和待确认人数 | 是 |
 | `test.checkin` | `force?` | 打卡测试；`force` 仅跳过"今日已打卡"检查，**仍需在窗口内** | 是 |
 | `test.time` | — | 设备时间 / 窗口配置 / 是否在窗口内 / 下次计划 | 否 |
+
+小组模式的 `test.probe`、`test.login`、`test.chain` 成功读取会话与待确认人数后返回 `groupPendingCount`。状态使用 `GROUP_PENDING` 或 `GROUP_CLEAR`。指定账号执行时，这些字段在各账号行的 `data` 下。查询失败时应显示原因，个人模式忽略早期构建在体检中返回的数值 0。
 
 > ⚠️ **F2 二次验证中继（`code` / `code=123456`）尚未实装**：当前阶段依赖"浏览器指纹 + 打卡窗口内登录"完全避开二次验证（见 `docs/api-contract.md` §6）。
 > 分片（`seq/of`）在**设备 → 手机**方向已实装（base64 分片，用于 `status` / `logs` 等长回执）；手机 → 设备的分片尚未实装。

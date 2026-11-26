@@ -7,7 +7,8 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from ble_gui import Application, Backend, OPERATIONS, build_payload, device_defaults, project_version
-from console_model import notification_labels, patch_payload, resolve_account, selected_payload, snapshot_accounts
+from console_model import (group_pending_count, group_report_mode, mode_name, notification_labels,
+                           patch_payload, resolve_account, selected_payload, snapshot_accounts)
 
 
 def menu_groups():
@@ -291,6 +292,8 @@ class Dashboard(Application):
         spec=self.current_spec();op=spec[1]
         try:
             values={k:v.get() for k,v in self.state['vars'].items()}
+            if op=='group.mode' and group_report_mode(self.snapshot) is None:
+                raise ValueError('设备未提供打卡模式，请先刷新状态，旧固件需升级')
             if op=='account.add':
                 self.require_v2()
                 if self.account_mode.get()=='update':self.check_target()
@@ -316,6 +319,8 @@ class Dashboard(Application):
             if spec[3] or op in ('account.add','account.clear'):
                 target_text='、'.join(payload.get('targets',[])) or payload.get('target',payload.get('label','当前设备'))
                 message=f"设备：{self.device.get()}\n目标：{target_text}\n操作：{spec[0]}\n{spec[3]}"
+                if op == 'group.mode':
+                    message += f"\n将切换到{mode_name(payload['enabled'])}。"
                 if op in ('account.remove','account.clear'):message+='\n删除或清空账号后将清除微信授权，需重新导入，避免槽位错配。'
                 if not messagebox.askyesno('确认执行',message):return
             self.execute_payload(payload)
@@ -384,7 +389,22 @@ class Dashboard(Application):
             self.show_rows(('序号','SSID','RSSI','频道','加密','BSSID'),[(i,a.get('ssid') or '隐藏网络',a.get('rssi'),a.get('channel'),enc.get(a.get('enc'),str(a.get('enc'))),a.get('bssid')) for i,a in enumerate(data['aps'])])
             self.result_meta.set(f"扫描到 {len(data['aps'])} 个接入点 · 同名 SSID 不去重，可滚动查看全部")
         elif isinstance(data,dict) and isinstance(data.get('accounts'),list) and message.get('_operation') in ('test.login','test.chain','test.checkin','test.multi'):
-            self.show_rows(('账号','操作','结果','说明'),[(a.get('label'),a.get('operation'),'跳过' if a.get('status')=='skipped' else '通过' if a.get('ok') else '未通过',a.get('msg')) for a in data['accounts']])
+            rows = []
+            for account in data['accounts']:
+                count = group_pending_count(account.get('data'))
+                detail = account.get('msg', '') if count is None else f'小组待确认人数 {count}'
+                outcome = '跳过' if account.get('status') == 'skipped' else '通过' if account.get('ok') else '未通过'
+                rows.append((account.get('label'), account.get('operation'), outcome, detail))
+            self.show_rows(('账号', '操作', '结果', '说明'), rows)
+        elif message.get('_operation') == 'test.probe' and isinstance(data, dict):
+            count = group_pending_count(data)
+            if data.get('sessionValid') is False:
+                self.show_rows(('项目', '结果'), [('会话检查', '会话不可用，请先执行登录检查')])
+            elif count is not None:
+                self.show_rows(('项目', '结果'), [('打卡模式', '安全员小组确认'), ('小组待确认人数', count)])
+            else:
+                personal = {key: value for key, value in data.items() if key != 'groupPendingCount'}
+                self.show_rows(('项目', '结果'), [('结果', message.get('msg', '已确认'))] + self.flatten(personal))
         else:
             changes=[('已提交修改项','、'.join(self.changed_fields)),('其余字段','保留设备原记录')] if self.current_op=='account.patch' and getattr(self,'changed_fields',None) else []
             self.show_rows(('项目','结果'),[('结果',message.get('msg','已确认'))]+changes+self.flatten(data))
@@ -402,6 +422,7 @@ class Dashboard(Application):
         if msg=='status' and isinstance(data,dict):
             self.snapshot.update(data);cfg=data.get('cfg',{});net=data.get('net',{});run=data.get('runtime',{});schedule=cfg.get('schedule',{})
             rows=[('设备名称',cfg.get('device','—'),'当前设备'),('固件版本',data.get('fw','—'),''),('已连接网络',net.get('ssid') or '未连接',''),('IP 地址',net.get('ip','—'),''),('设备时间',net.get('deviceTime','—'),''),('自动打卡','开启' if schedule.get('autoDaily') else '关闭',''),('计划时间',schedule.get('checkinAt','—'),''),('下次执行',data.get('schedule',{}).get('nextRun','—'),''),('最近结果',data.get('last',{}).get('message','暂无'),'')]
+            rows.insert(5, ('打卡模式', mode_name(group_report_mode(data)), ''))
             for key,title in [('heapPeakUsedBytes','内部堆峰值'),('heapFreeBytes','可用内部堆'),('psramFreeBytes','可用 PSRAM')]:rows.append((title,str(run[key])+' B' if key in run else '设备未提供',''))
             self.overview_table.delete(*self.overview_table.get_children())
             for row in rows:self.overview_table.insert('','end',values=row)
@@ -420,7 +441,10 @@ class Dashboard(Application):
         elif msg=='notify' and isinstance(data,dict):
             self.snapshot['notification']=dict(data,style={'get':0,'post_text':1,'post_json':2}.get(data.get('style'),2))
         self.update_accounts()
-        if not self.state.get('dirty'):
+        if (message.get('_operation') == 'group.mode' and message.get('evt') == 'ok'
+                and self.current_spec()[1] == 'group.mode'):
+            self.state['dirty'] = False
+        elif not self.state.get('dirty'):
             for key,value in device_defaults(self.current_spec()[1],self.snapshot).items():
                 if key in self.state['vars']:self.state['vars'][key].set(value)
             self.state['dirty']=False

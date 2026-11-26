@@ -33,7 +33,7 @@
     auth <user> <pass> [bfp]   配置学号 / 密码 / 浏览器指纹
     loc <lat> <lng> [addr]     配置打卡坐标
     sched <at> [end] [jitter]  配置打卡时间，如 sched 22:00 23:30 30
-    group <on|off>             设定安全员小组确认模式（设备级）
+    group [status|on|off]      查看或设定安全员小组确认（设备级）
     auto <on|off>              开关每日自动打卡
     account list               列出账号表（学号打码，不含密码/指纹；单人 = 只有一条）
     account add <标签> <学号> <密码> [指纹|-] [lat lng [地址…]]
@@ -51,8 +51,8 @@
     login [force]              登录链路自测（force = 打卡窗口外也强制登录）
     chain [wait_s] [force]     全链路自测：登录页→登录→进入微应用→业务接口
                                （wait_s = 等待平台放行的秒数，最长 900，默认 0）
-    probe                      前置体检（只读，随时可用）
-    checkin [force]            打卡（force=跳过"今日已打卡"检查）
+    probe                      前置体检（小组模式查看待确认人数）
+    checkin [force]            按当前模式提交（force 仅对个人已打卡检查生效）
     wx status                  查看微信凭据槽位状态（不回显令牌）
     wx import <slot> <openid> <access> <refresh> <expiresAt>
                                导入微信授权凭据（expiresAt 为 Unix 秒；令牌不会回显）
@@ -83,6 +83,8 @@ import re
 import sys
 import time
 
+from console_model import group_pending_count, group_report_mode, mode_name
+
 try:
     from bleak import BleakClient, BleakScanner
 except ImportError:  # pragma: no cover
@@ -104,6 +106,8 @@ class Console:
         self._secrets = set()
         self.next_id = 1
         self.pending_chunks = {}
+        self.group_mode_known = False
+        self.group_mode = None
         self.received = asyncio.Queue()
         self._loop = asyncio.get_event_loop()
 
@@ -190,6 +194,15 @@ class Console:
             self.output("回执不是完整 JSON，请重新查询")
             return
         self.output(f"\n<= {pretty}")
+        data = message.get("data") if isinstance(message, dict) else None
+        if isinstance(data, dict):
+            if message.get("msg") == "status":
+                self.group_mode_known = True
+                self.group_mode = group_report_mode(data)
+                self.output(f"打卡模式：{mode_name(self.group_mode)}")
+            count = group_pending_count(data)
+            if count is not None:
+                self.output(f"小组待确认人数：{count}")
         if self.on_message and isinstance(message, dict):
             self.on_message(safe)
 
@@ -431,10 +444,15 @@ class Console:
                     payload["jitter_s"] = int(args[2])
                 await self.send(payload)
         elif command == "group":
-            if len(args) != 1 or args[0] not in ("on", "off"):
-                print("  用法：group <on|off>")
+            action = args[0].lower() if args else "status"
+            if len(args) > 1 or action not in ("status", "on", "off"):
+                print("  用法：group [status|on|off]")
+            elif action == "status":
+                await self.send({"op": "status"})
+            elif self.group_mode_known and self.group_mode is None:
+                print("  当前固件未提供小组模式，请升级后重试")
             else:
-                await self.send({"op": "group.mode", "enabled": args[0] == "on"})
+                await self.send({"op": "group.mode", "enabled": action == "on"})
         elif command == "auto":
             await self.send({"op": "auto.set", "enabled": (args[0] != "off") if args else True})
         elif command == "name":

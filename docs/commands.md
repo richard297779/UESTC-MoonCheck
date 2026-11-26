@@ -38,9 +38,19 @@ auto on
 > WiFi 名或密码含空格时，短命令会被拆错，改用原始指令：
 > `raw {"op":"wifi.set","ssid":"我的 WiFi","pass":"a b#c"}`
 
-### 微信操作票据（当前固件源码）
+### 新版小组确认
 
-平台现要求打卡请求携带 `X-Checkin-Ticket`。当前 v0.8.0 固件会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。v0.5.1 已支持票据，但长命令队列存在截断问题；v0.6.0 修复后，`hello.maxCommandBytes` 为 4095（另加一个换行，总计最多 4096 字节）。没有该字段的旧固件按 511 字节 JSON 上限处理。
+| 命令 | 作用 |
+| --- | --- |
+| `group status` | 查看设备当前的打卡模式 |
+| `group on` / `group off` | 开启小组确认或切回个人定位 |
+| `login` / `probe` | 小组模式下检查安全员会话与待确认人数 |
+
+`group.mode` 的 `enabled` 取 JSON 布尔值。设置对所有启用账号生效，状态见 `cfg.schedule.groupReport`。旧固件缺少该字段时保留个人定位操作。只有有效的小组查询才返回 `groupPendingCount`。
+
+### 微信操作票据（个人定位模式）
+
+平台要求个人定位打卡请求携带 `X-Checkin-Ticket`。当前固件会在打卡前自动使用导入的微信凭据换取短效票据，无需手动取得或设置票据本身。v0.5.1 已支持票据，但长命令队列存在截断问题；v0.6.0 修复后，`hello.maxCommandBytes` 为 4095（另加一个换行，总计最多 4096 字节）。没有该字段的旧固件按 511 字节 JSON 上限处理。
 
 在 `ble_console.py` 中可直接使用以下快捷命令：
 
@@ -185,6 +195,7 @@ wx test 0
 | `loc.set` | `lat`, `lng`, `addr` | 坐标 |
 | `sched.set` | `at`, `window_end`, `jitter_s` | 调度 |
 | `auto.set` | `enabled` | 自动打卡开关 |
+| `group.mode` | `enabled` | 安全员小组确认开关 |
 | `notify.set` | `url`, `style`, `on`, `gap`, `quota` | 默认通道 |
 | `notify.add` | `label`, `url`, `style?`, `on?`, `accounts?` | 附加通道（≤5 条，0.4.0 起；`accounts` 数组或逗号串，缺省=all） |
 | `notify.remove` | `label` | 删除附加通道 |

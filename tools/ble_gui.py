@@ -10,6 +10,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 import ble_console as protocol
+from console_model import group_report_mode, mode_name
 
 
 def project_version():
@@ -47,6 +48,7 @@ def device_defaults(operation, snapshot):
         "sched.set": {"at": schedule.get("checkinAt"), "window_end": schedule.get("windowEnd"),
                       "window_start": schedule.get("windowStart"), "jitter_s": schedule.get("jitterSeconds")},
         "auto.set": {"enabled": schedule.get("autoDaily")},
+        "group.mode": {"enabled": group_report_mode(snapshot)},
         "multi.set": {"gap_s": cfg.get("accountGap")},
         "name.set": {"name": cfg.get("label")},
         "notify.set": {k: snapshot.get("notification", {}).get(k) for k in ("on", "style", "gap", "quota")},
@@ -86,11 +88,12 @@ OPERATIONS = {
     ],
     "调度与执行": [
         ("保存时间窗口", "sched.set", [("at", "计划执行 HH:MM", "text", "22:00"), ("window_start", "窗口开始（设备未提供时可空）", "text", ""), ("window_end", "窗口结束 HH:MM", "text", "23:30"), ("jitter_s", "随机延迟秒", "int", "30")], ""),
+        ("打卡模式", "group.mode", [("enabled", "启用安全员小组确认", "bool", False)], "模式适用于设备上的所有启用账号。在安全员账号下使用小组确认。"),
         ("自动打卡开关", "auto.set", [("enabled", "启用每日自动打卡", "bool", False)], "将修改设备的每日调度开关。"),
         ("多人间隔", "multi.set", [("gap_s", "间隔秒（0–600）", "int", "20")], ""),
         ("登录测试", "test.login", [("force", "窗口外也登录", "bool", False)], "将使用真实账号登录。"),
         ("全链路测试", "test.chain", [("wait_s", "等待放行秒（0–900）", "int", "0"), ("force", "强制登录", "bool", False)], "将使用真实账号访问平台。"),
-        ("立即打卡", "test.checkin", [("force", "跳过今日已打卡检查", "bool", False)], "将提交真实打卡请求。"),
+        ("立即打卡", "test.checkin", [("force", "个人模式下跳过今日已打卡检查", "bool", False)], "将提交真实打卡请求。"),
         ("多人执行", "test.multi", [("probe", "只体检不提交（仍会登录）", "bool", True), ("force", "强制执行", "bool", False)], "将访问真实账号；取消只体检后会提交打卡。"),
     ],
     "通知": [
@@ -286,7 +289,8 @@ class Backend:
             raise RuntimeError("请先连接设备")
         timeout = max(90, (int(payload.get("wait_s", 0)) + 180) * len(payload["targets"]) + 600 * max(0, len(payload["targets"])-1)) if "targets" in payload else max(90, int(payload.get("wait_s", 0)) + 90)
         result = await self.session.request(payload, timeout)
-        if payload["op"].endswith((".set", ".add", ".patch", ".remove", ".enable", ".clear", ".import", ".link")) or "targets" in payload:
+        if payload["op"] == "group.mode" or payload["op"].endswith(
+                (".set", ".add", ".patch", ".remove", ".enable", ".clear", ".import", ".link")) or "targets" in payload:
             try:
                 await self.refresh()
             except Exception:
@@ -462,6 +466,7 @@ class Application:
                 f"网络  {net.get('ssid') or '未连接'}     IP  {net.get('ip', '—')}\n\n"
                 f"设备时间  {net.get('deviceTime', '—')}\n\n"
                 f"自动打卡  {'已开启' if schedule.get('autoDaily') else '已关闭'}     计划时间  {schedule.get('checkinAt', '—')}\n\n"
+                f"打卡模式  {mode_name(group_report_mode(data))}\n\n"
                 f"下次执行  {data.get('schedule', {}).get('nextRun', '—')}\n\n"
                 f"最近结果  {last.get('date', '')}  {last.get('message') or '暂无记录'}\n\n"
                 f"内存峰值  {runtime.get('heapPeakUsedBytes', '—')} B     可用内存  {runtime.get('heapFreeBytes', '—')} B")
@@ -591,6 +596,9 @@ class Application:
             messagebox.showinfo("尚不可操作", "请先连接设备，并等待上一操作完成。")
             return
         spec = state["specs"][state["choice"].current()]
+        if spec[1] == "group.mode" and group_report_mode(self.snapshot) is None:
+            messagebox.showinfo("设备未提供打卡模式", "请刷新状态，旧固件需升级。")
+            return
         try:
             payload = build_payload(spec, {k: v.get() for k, v in state["vars"].items()})
         except (ValueError, TypeError):
@@ -720,7 +728,8 @@ class Application:
         text.pack(fill="both", expand=True)
         text.insert("1.0", "启动：安装 Python 3.10+（含 tkinter）与 bleak，然后双击 ble_console.pyw。\n"
                     "1. 关闭手机 APK 等 BLE 连接，打开电脑蓝牙；扫描并核对设备地址后连接。\n"
-                    "2. 先配置 Wi-Fi、账号与坐标，再导入账号本人微信授权；在查询与配置中按标签或序号匹配目标。\n"
+                    "2. 配置 Wi-Fi、账号和计划。在查询与配置 → 调度与执行 → 打卡模式选择安全员小组确认。体检可看待确认人数。\n"
+                    "   个人定位模式还需配置坐标并导入本人微信授权。\n"
                     "3. 设备概览与账号列表用表格展示；启用列可直接勾选。所有操作在查询与配置中选择。\n"
                     "   修改账号留空保留原值；新建须填标签、学号、密码、指纹。登录和打卡请勾选目标账号。\n"
                     "   完整回执仅在开发者选项开启后显示。真实打卡和通知会先确认。\n"

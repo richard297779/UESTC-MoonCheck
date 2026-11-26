@@ -1,6 +1,30 @@
-"""Pure account targeting and non-destructive payload construction."""
+"""Pure BLE status formatting, account targeting and payload construction."""
 import math
 import re
+
+
+def group_report_mode(snapshot):
+    config = snapshot.get("cfg")
+    schedule = config.get("schedule") if isinstance(config, dict) else None
+    value = schedule.get("groupReport") if isinstance(schedule, dict) else None
+    return value if type(value) is bool else None
+
+
+def mode_name(mode):
+    if mode is None:
+        return "设备未提供模式切换"
+    return "安全员小组确认" if mode else "个人定位"
+
+
+def group_pending_count(data):
+    if not isinstance(data, dict):
+        return None
+    # 早期 v0.9.0 体检总是返回该数值，个人模式或会话失效时为 0。
+    if data.get("sessionValid") is False or data.get("recordStatusCode", data.get("today")) not in (
+            "GROUP_PENDING", "GROUP_CLEAR"):
+        return None
+    value = data.get("groupPendingCount")
+    return value if type(value) is int and value >= 0 else None
 
 
 def snapshot_accounts(snapshot):

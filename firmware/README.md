@@ -60,8 +60,8 @@ pio device monitor --port COM5               # 串口日志，115200
 升级到包含小组功能的固件后，用仓库中的 BLE 控制台连接设备。
 
 1. 配置本人 CAS 登录和 Wi-Fi。账号表非空时，确保启用的账号都有晚安成电安全员角色。
-2. 输入 `group on`，用 `status` 核对 `cfg.schedule.groupReport` 为 `true`。`group off` 可切回个人模式。
-3. 在打卡窗口用 `login`、`probe` 查询登录和待确认人数。窗口外只读登录检查可用 `login force`。`probe` 回执中的 `groupPendingCount` 是平台当日待确认人数。
+2. 在电脑 BLE 控制台选择「查询与配置 → 调度与执行 → 打卡模式」，或在 Android「配置 → 打卡模式」开启安全员小组确认。命令行可用 `group on`，再用 `group status` 核对设置。使用 `group off` 可切回个人模式。
+3. 在打卡窗口执行登录检查、前置体检，核对待确认人数。命令行用 `login`、`probe`，窗口外的登录检查可用 `login force`。只有成功读取小组状态时才返回 `groupPendingCount`。
 4. 按已有计划运行。小组模式使用设备配置的窗口，不需要定位或微信取票。
 
 有组员联系不上时，请在计划执行前到网页提交异常。需要暂缓时先执行 `auto off`，处理完异常后再按需要恢复。小组模式遇到平台标记异常、已处理或未识别的记录会保留给人工检查，并在复查仍有待办时报告未完成。

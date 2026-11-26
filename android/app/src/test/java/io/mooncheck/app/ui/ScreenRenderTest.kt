@@ -26,10 +26,11 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ScreenRenderTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
-    private fun launch(ready: Boolean = false) {
+    private fun launch(ready: Boolean = false, groupReport: Boolean? = null) {
         val vm = ControlViewModel(ApplicationProvider.getApplicationContext<Application>())
         compose.setContent { MoonTheme { MoonApp(vm,
             DeviceSnapshot(ready = ready, firmware = BuildConfig.VERSION_NAME, wifi = "Dorm WiFi", wifiConnected = true,
+                groupReport = groupReport,
                 runtime = if (ready) RuntimeStatus(board = "s3-n16r8", chip = "ESP32-S3", uptime = 92040,
                     total = 327680, free = 184320, minimum = 98304, peak = 229376, largest = 131072,
                     psramTotal = 8388608, psramFree = 8159232, psramMinimum = 7864320,
@@ -61,6 +62,15 @@ class ScreenRenderTest {
         compose.onNodeWithText("连接 WiFi").performClick()
         compose.onNodeWithText("保存到设备").performScrollTo().performClick()
         compose.onNodeWithText("请填写WiFi 名称").assertIsDisplayed()
+    }
+    @Test fun groupModeUsesOnlyTheRequiredConfigurationSteps() {
+        launch(true, groupReport = true)
+        compose.onNodeWithText("配置", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("安全员小组确认").assertIsDisplayed()
+        compose.onNodeWithText("导入微信授权").assertDoesNotExist()
+        compose.onNodeWithText("设置宿舍坐标").assertDoesNotExist()
+        compose.onNodeWithText("设置自动计划").performScrollTo().performClick()
+        compose.onNodeWithText("窗口开始").performScrollTo().assertIsDisplayed()
     }
     @Test fun accountScreenExplainsSlotZero() {
         launch(true); compose.onNodeWithText("账号", useUnmergedTree = true).performClick()

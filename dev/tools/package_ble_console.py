@@ -46,7 +46,8 @@ def build_archive(output, version, source_commit, source_dirty, repository='rich
 
 使用指南：https://github.com/{repository}/blob/v{version}/docs/ble-gui.md
 源码及逐文件摘要见 manifest.json。
-在命令行模式输入 group on 开启新版小组确认，使用 probe 检查安全员会话和待确认人数。
+小组确认：查询与配置 → 调度与执行 → 打卡模式。完成登录检查后看前置体检中的待确认人数。
+命令行支持 group status、group on、group off 与 probe。
 '''.encode('utf-8')
     manifest = dict(version=version, component='ble-console-source',
                     firmwareCompatibility=f'{version} / protocol 1',

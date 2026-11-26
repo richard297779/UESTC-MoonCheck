@@ -46,7 +46,7 @@ struct NetworkFixture {
   int rssi() const { return -48; }
 };
 struct ConfigFixture {
-  String toJsonSummary() const { return "{\"schedule\":{\"autoDaily\":false},\"wifiSsid\":\"fixture\"}"; }
+  String toJsonSummary() const { return "{\"schedule\":{\"autoDaily\":false,\"groupReport\":true,\"windowStart\":\"20:30\"},\"wifiSsid\":\"fixture\"}"; }
   String lastResultJson() const { return "{\"date\":\"2026-10-26\",\"ok\":true}"; }
 };
 struct CookieFixture { String toJsonSummary() const { return "[]"; } };

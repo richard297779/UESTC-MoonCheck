@@ -80,6 +80,21 @@ class TestWxCommands(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.client.writes, [])
 
+    async def test_group_commands_and_legacy_firmware(self):
+        await self.console.run_command("group")
+        self.assertEqual(self.client.writes[0]["op"], "status")
+        self.console._on_notify(None, b'{"msg":"status","data":{"cfg":{"schedule":{}}}}')
+        await self.console.run_command("group on")
+        self.assertEqual(len(self.client.writes), 1)
+        self.console._on_notify(None, b'{"msg":"status","data":{"cfg":{"schedule":{"groupReport":false}}}}')
+        await self.console.run_command("group ON")
+        await self.console.run_command("group off")
+        self.assertEqual([x["enabled"] for x in self.client.writes[1:]], [True, False])
+        self.console._on_notify(None, b'{"msg":"probe done","data":{"sessionValid":false,"groupPendingCount":0}}')
+        self.assertNotIn("小组待确认人数", self.output.getvalue())
+        self.console._on_notify(None, b'{"msg":"probe done","data":{"recordStatusCode":"GROUP_CLEAR","sessionValid":true,"groupPendingCount":0}}')
+        self.assertIn("小组待确认人数：0", self.output.getvalue())
+
     async def test_account_add_allows_omitted_optional_fingerprint(self):
         await self.console.run_command('account add A01 fixture-user fixture-password')
         self.assertEqual(self.client.writes[0]['op'], 'account.add')

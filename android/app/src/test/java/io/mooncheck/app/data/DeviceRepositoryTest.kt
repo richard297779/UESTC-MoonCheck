@@ -16,6 +16,8 @@ class DeviceRepositoryTest {
         override var onDisconnect: () -> Unit = {}
         val sent = mutableListOf<String>()
         var accountV2 = false
+        var groupReport: Boolean? = null
+        var probeSessionValid = true
         var selectedReply: JsonArray? = null
         var productionStatus = false
         var holdLogs = false
@@ -42,7 +44,19 @@ class DeviceRepositoryTest {
                 ProtocolCodec.json.parseToJsonElement(javaClass.getResource("/firmware-status.json")!!.readText()).jsonObject.obj("data")
                 else when (op) {
                 "hello" -> buildJsonObject { put("proto", 1); put("fw", "0.5.1"); put("btMac", "00:00:00:00:00:01"); if (longCommands) put("maxCommandBytes", 4095); if(accountV2)put("caps",buildJsonArray { add("account-v2");add("selected-execution") }) }
-                "status" -> buildJsonObject { put("net", buildJsonObject { put("state", "connected"); put("ssid", "Actual Network"); put("timeSynced", true) }); put("runtime", runtimeReply) }
+                "status" -> buildJsonObject {
+                    put("net", buildJsonObject { put("state", "connected"); put("ssid", "Actual Network"); put("timeSynced", true) })
+                    put("runtime", runtimeReply)
+                    groupReport?.let { group -> put("cfg", buildJsonObject {
+                        put("schedule", buildJsonObject { put("groupReport", group); put("windowStart", "20:00") })
+                    }) }
+                }
+                "group.mode" -> { groupReport = request["enabled"]?.jsonPrimitive?.boolean; JsonObject(emptyMap()) }
+                "test.probe" -> buildJsonObject {
+                    put("sessionValid", probeSessionValid)
+                    put("recordStatusCode", if (groupReport == true) "GROUP_CLEAR" else "PENDING")
+                    put("groupPendingCount", 0)
+                }
                 "logs" -> buildJsonObject { put("text", logsReply); put("dropped", 3) }
                 "account.snapshot" -> buildJsonObject { put("revision",22);put("accounts",buildJsonArray { add(buildJsonObject { put("slot",0);put("label","A");put("user","fixture-01");put("enabled",true);put("passwordSet",true) }) }) }
                 "test.login" -> buildJsonObject { put("accounts",selectedReply ?: JsonArray(emptyList())) }
@@ -86,6 +100,35 @@ class DeviceRepositoryTest {
         assertTrue(repository.state.value.error)
         assertTrue(repository.state.value.message.contains("A · 通过"))
         assertTrue(repository.state.value.message.contains("B · 未通过"))
+    }
+    @Test fun groupModeRefreshesFromDeviceAndProbePreservesVerifiedZero() = runTest {
+        val fake = Fake(); fake.groupReport = false
+        val repository = DeviceRepository(fake, backgroundScope)
+        repository.connect(board); runCurrent()
+        assertEquals(false, repository.state.value.groupReport)
+        assertEquals("20:00", repository.state.value.windowStart)
+        repository.execute("设置模式", "group.mode", buildJsonObject { put("enabled", true) }); runCurrent()
+        assertEquals(true, repository.state.value.groupReport)
+        assertEquals(2, fake.sent.count { it == "status" })
+        repository.execute("体检", "test.probe"); runCurrent()
+        assertTrue(repository.state.value.message.contains("待确认人数 0"))
+        fake.probeSessionValid = false
+        repository.execute("体检", "test.probe"); runCurrent()
+        assertTrue(repository.state.value.error)
+        assertFalse(repository.state.value.message.contains("待确认人数"))
+        repository.disconnect(); runCurrent()
+        assertNull(repository.state.value.groupReport)
+    }
+    @Test fun legacyFirmwarePreservesPersonalProbeAndRejectsModeSwitchLocally() = runTest {
+        val fake = Fake()
+        val repository = DeviceRepository(fake, backgroundScope)
+        repository.connect(board); runCurrent()
+        assertNull(repository.state.value.groupReport)
+        repository.execute("设置模式", "group.mode", buildJsonObject { put("enabled", true) }); runCurrent()
+        assertFalse("group.mode" in fake.sent)
+        assertTrue(repository.state.value.ready)
+        repository.execute("体检", "test.probe"); runCurrent()
+        assertFalse(repository.state.value.message.contains("待确认人数"))
     }
     @Test fun handshakeCompletesWithProductionFirmwareStatus() = runTest {
         val fake = Fake(); fake.productionStatus = true

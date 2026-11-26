@@ -87,6 +87,8 @@ int main() {
         assert data["runtime"]["heapPeakUsedBytes"] == 220000
         assert all(key in data for key in ("chip", "runtime", "net", "cfg", "cookies", "auth", "schedule", "last"))
     assert fixtures[1]["data"]["net"]["ssid"].startswith("宿舍 ") and '"' in fixtures[1]["data"]["net"]["ssid"]
+    group_schedule = fixtures[1]["data"]["cfg"]["schedule"]
+    assert group_schedule["groupReport"] is True and group_schedule["windowStart"] == "20:30"
     assert fixtures[2]["data"]["runtime"]["psramTotalBytes"] == 0
     # Reuse the actual production-generated reply for Android framing tests.
     resources = ROOT / "android/app/src/test/resources"

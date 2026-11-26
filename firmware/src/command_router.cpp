@@ -33,6 +33,11 @@ const char* const kTag = "router";
 /// @brief 队列长度。
 constexpr UBaseType_t kQueueLength = 8;
 
+String groupPendingField(const ProbeReport& report) {
+  if (!report.sessionValid || !report.today.recordStatusCode.startsWith("GROUP_")) return String();
+  return String(",\"groupPendingCount\":") + String(report.groupPendingCount);
+}
+
 /// @brief 转义 JSON 字符串。
 String escapeJson(const String& text) {
   String out;
@@ -387,7 +392,8 @@ void CommandRouter::dispatchCommand(const String& line) {
       const bool enabled = request["enabled"].as<bool>();
       const Result result = m_config->setGroupReport(enabled);
       if (result != Result::Ok) replyError(id, result, "group mode save failed");
-      else replyOk(id, enabled ? "group reporting enabled" : "group reporting disabled");
+      else replyOk(id, enabled ? "group reporting enabled" : "group reporting disabled",
+                   enabled ? "{\"enabled\":true}" : "{\"enabled\":false}");
     }
   } else if (op == "notify.set") {
     handleNotifySet(request, id);
@@ -551,7 +557,7 @@ void CommandRouter::handleHello(int32_t id) {
            "\"btMac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"bleName\":\"%s-%02X%02X\","
            "\"flashMB\":%u,\"psramKB\":%u,\"caps\":[\"wifi\",\"ble\",\"cas\",\"checkin\",\"test\","
-           "\"cron\",\"logs\",\"account-v2\",\"selected-execution\"]}",
+           "\"cron\",\"logs\",\"account-v2\",\"selected-execution\",\"group-report\"]}",
            BoardProfile::kId, FW_VERSION, FW_PROTO_VERSION, FW_BUILD_TIME, mac[0], mac[1], mac[2], mac[3], mac[4],
            mac[5], btMac[0], btMac[1], btMac[2], btMac[3], btMac[4], btMac[5],
            FW_DEVICE_NAME_PREFIX, btMac[4], btMac[5],
@@ -1119,6 +1125,7 @@ void CommandRouter::workTestLogin(const WorkItem& item) {
   data += report.inWindow ? "true" : "false";
   data += ",\"loginAllowed\":";
   data += report.loginAllowed ? "true" : "false";
+  data += groupPendingField(report);
   data += '}';
 
   replyOk(item.requestId, didLogin ? "logged in, session verified" : "session already valid", data);
@@ -1225,7 +1232,7 @@ void CommandRouter::workTestChain(const WorkItem& item) {
            "\"didLogin\":%s,\"loginDeferred\":%s,\"appEntry\":%s,"
            "\"entryResult\":\"%s\",\"entryStatus\":%d,\"entryUrl\":\"%s\","
            "\"entryAttempts\":%u,\"waitedS\":%u,\"today\":\"%s\",\"window\":\"%s\","
-           "\"inWindow\":%s,\"canCheckin\":%s,\"elapsedMs\":%u}",
+           "\"inWindow\":%s,\"canCheckin\":%s,\"elapsedMs\":%u%s}",
            loginPageOk ? "true" : "false", sessionOk ? "true" : "false",
            h5Page ? "true" : "false", warmed ? "true" : "false", warmStatus, didLogin ? "true" : "false",
            deferred ? "true" : "false", appEntry ? "true" : "false",
@@ -1233,7 +1240,7 @@ void CommandRouter::workTestChain(const WorkItem& item) {
            static_cast<unsigned>(entryAttempts), static_cast<unsigned>(waitedMs / 1000),
            report.today.recordStatusCode.c_str(), report.windowText.c_str(),
            report.inWindow ? "true" : "false", canCheckin ? "true" : "false",
-           static_cast<unsigned>(millis() - startMs));
+           static_cast<unsigned>(millis() - startMs), groupPendingField(report).c_str());
   LOG_I(kTag,
         "chain: loginPage=%d session=%d h5Page=%d warmup=%d/%d didLogin=%d appEntry=%d entryResult=%s "
         "today=%s inWindow=%d canCheckin=%d",
@@ -1282,14 +1289,14 @@ void CommandRouter::workTestProbe(const WorkItem& item) {
            "\"window\":\"%s\",\"inWindow\":%s,\"windowFromPlatform\":%s,"
            "\"recordStatusCode\":\"%s\",\"checkinTime\":\"%s\",\"distanceMeter\":%.1f,"
            "\"abnormalFlag\":%s,\"location\":\"%s\",\"radiusMeter\":%d,"
-           "\"groupPendingCount\":%u,\"elapsedMs\":%u}",
+           "\"elapsedMs\":%u%s}",
            report.sessionValid ? "true" : "false", report.h5Reached ? "true" : "false",
            report.h5PageReached ? "true" : "false", report.deviceTime.c_str(),
            report.windowText.c_str(), report.inWindow ? "true" : "false",
            report.windowFromPlatform ? "true" : "false", report.today.recordStatusCode.c_str(),
            report.today.checkinTime.c_str(), report.today.distanceMeter,
            report.today.abnormalFlag ? "true" : "false", report.location.name.c_str(),
-           report.location.radiusMeter, report.groupPendingCount, static_cast<unsigned>(report.elapsedMs));
+           report.location.radiusMeter, static_cast<unsigned>(report.elapsedMs), groupPendingField(report).c_str());
 
   // 手动 test.probe：只回结果。定时触发的体检（Trigger::Probe）现在一律走
   // workMultiCheckin(probe)，21:00 的每日状态摘要在那里发。
