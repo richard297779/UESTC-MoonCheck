@@ -178,7 +178,7 @@ class TicketTests(unittest.TestCase):
             self.assertEqual({},config.load()['wechat'])
             Path(os.environ['MOONCHECK_CONFIG']).write_text(json.dumps({'student_id':'old','unknown_key':42}))
             migrated=config.load()
-            self.assertEqual(2,migrated['config_schema']);self.assertEqual(42,migrated['unknown_key']);self.assertEqual({},migrated['wechat'])
+            self.assertEqual(3,migrated['config_schema']);self.assertEqual(42,migrated['unknown_key']);self.assertEqual({},migrated['wechat'])
 
     def test_interprocess_lock_rejects_concurrent_owner(self):
         from mooncheck_app.operation_lock import operation_lock

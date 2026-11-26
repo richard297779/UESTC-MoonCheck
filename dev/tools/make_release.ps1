@@ -148,7 +148,7 @@ try {
         'Android：安装 android-debug.apk，允许该来源安装，然后打开应用连接自己的 WANAN 设备。',
         '这是 Debug 签名构建，不包含独立手机打卡引擎；联调验收状态见仓库 docs/project-health.md。',
         '固件：确认板型；首次 merged.bin 刷 0x0 会清配置；同分区升级用 full.zip 的 firmware.bin 刷 0x10000。',
-        '小组模式可在 Android 配置页或电脑 BLE 控制台的打卡模式启用。命令行可用 group on、group status 和 probe。个人定位使用本人微信授权。',
+        '在 Android 的「账户」或电脑 BLE 控制台的「账户配置」设置各账户模式。新建默认启用小组模式，取消勾选后使用个人定位，并设定位置与微信授权。',
         '维护者仅具备 S3-N16R8/WROOM-32 实测条件；其他四种新增目标未经实际验证。',
         ('联调记录：' + $(if ($ValidationNote) { $ValidationNote } else { '未提供本次确认；详见 docs/project-health.md，不能推断全部板型已验证。' })),
         ('欢迎验证者向开发者提交板卡规格、版本和脱敏结果：https://github.com/' + $Repo + '/issues'),
@@ -164,7 +164,7 @@ try {
     $assets += $guide
     $manifest = [ordered]@{
         schemaVersion=2; toolchain=@{platform='espressif32 7.1.3';arduino='2.0.17';nimble='2.5.1';arduinoJson='7.4.3'}; version=$ver; repository=$Repo; sourceCommit=$commit; sourceDirty=$sourceDirty; firmwareProtocol=1; maxCommandBytes=4095;
-        android=$androidMetadata; bleConsole=@{version=$ver; file=[IO.Path]::GetFileName($bleSource); firmwareProtocol=1; requiredCapabilities=@("account-v2","selected-execution")}; boards=@($targets | ForEach-Object { $_.Key });
+        android=$androidMetadata; bleConsole=@{version=$ver; file=[IO.Path]::GetFileName($bleSource); firmwareProtocol=1; requiredCapabilities=@("account-v2","selected-execution","account-mode")}; boards=@($targets | ForEach-Object { $_.Key });
         boardProfiles=@($targets | ForEach-Object {
             $p = $_.Profile
             $m = Get-Content -LiteralPath (Join-Path $Base ('firmware/.pio/build/' + $_.Env + '/board-build.json')) -Raw | ConvertFrom-Json

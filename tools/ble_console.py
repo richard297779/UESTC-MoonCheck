@@ -33,12 +33,13 @@
     auth <user> <pass> [bfp]   配置学号 / 密码 / 浏览器指纹
     loc <lat> <lng> [addr]     配置打卡坐标
     sched <at> [end] [jitter]  配置打卡时间，如 sched 22:00 23:30 30
-    group [status|on|off]      查看或设定安全员小组确认（设备级）
+    group [status|on|off] [账号] 查看模式或设定目标账户的安全员小组确认
     auto <on|off>              开关每日自动打卡
-    account list               列出账号表（学号打码，不含密码/指纹；单人 = 只有一条）
-    account add <标签> <学号> <密码> [指纹|-] [lat lng [地址…]]
+    account list               读取账户列表（完整学号、打卡模式、凭据配置状态）
+    account new <学号> <指纹> [personal]  新建账户，密码隐藏输入，默认小组模式
+    account add <标签> <学号> <密码> <指纹> [lat lng [地址…]]
                                新增或覆盖一个账号（最多 6 个；省略坐标则沿用设备当前坐标，
-                               指纹填 - 表示不设置）
+                               新建须提供有效指纹）
     account on|off <标签>      单独开关这个账号是否打卡（off = 不登录不提交，也不计入
                                "全员成功"的分母）；account rm <标签> 删除，account clear 清空
                                表为空时设备自动用 auth + loc 配的那一个账号打卡
@@ -78,12 +79,14 @@
 import argparse
 import asyncio
 import base64
+from getpass import getpass
 import json
 import re
 import sys
 import time
 
-from console_model import group_pending_count, group_report_mode, mode_name
+from console_model import (group_pending_count, group_report_mode, mode_name, patch_payload,
+                           resolve_account, snapshot_accounts)
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -108,6 +111,8 @@ class Console:
         self.pending_chunks = {}
         self.group_mode_known = False
         self.group_mode = None
+        self.account_snapshot = {}
+        self.show_accounts = on_message is None
         self.received = asyncio.Queue()
         self._loop = asyncio.get_event_loop()
 
@@ -164,7 +169,7 @@ class Console:
                        "session", "cookie", "authorization", "token", "ticket", "code",
                        "access_token", "refresh_token", "x-checkin-ticket"}
         if isinstance(value, dict):
-            return {key: (str(item)[:4] + "******" if key.lower() == "user" and isinstance(item, str) and "*" in item
+            return {key: (str(item)[:4] + "******" if key.lower() == "user" and isinstance(item, str) and item
                           else "<已隐藏>" if key.lower() in secret_keys else Console._redact(item))
                     for key, item in value.items()}
         if isinstance(value, list):
@@ -200,6 +205,13 @@ class Console:
                 self.group_mode_known = True
                 self.group_mode = group_report_mode(data)
                 self.output(f"打卡模式：{mode_name(self.group_mode)}")
+            if message.get("msg") == "account snapshot" and self.show_accounts:
+                self.account_snapshot = data
+                for row in snapshot_accounts(data):
+                    identifier = ''.join(c for c in str(row.get('user', '')) if c.isprintable())
+                    label = ''.join(c for c in str(row.get('label', '')) if c.isprintable())
+                    mode = mode_name(row.get('groupReport'))
+                    self.output(f"{label} · {identifier or '未设置学号'} · {mode} · 密码{'已设置' if row.get('passwordSet') else '未设置'}")
             count = group_pending_count(data)
             if count is not None:
                 self.output(f"小组待确认人数：{count}")
@@ -211,9 +223,11 @@ class Console:
         self.next_id += 1
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         encoded = line.encode("utf-8")
-        for key, value in payload.items():
-            if key.lower() in {"pass", "password", "user", "bfp", "openid", "access", "refresh", "value", "url"} and isinstance(value, str) and len(value) >= 3:
-                self._secrets.add(value)
+        fields = payload.get("fields")
+        for values in (payload, fields if isinstance(fields, dict) else {}):
+            for key, value in values.items():
+                if key.lower() in {"pass", "password", "user", "bfp", "openid", "access", "refresh", "value", "url"} and isinstance(value, str) and len(value) >= 3:
+                    self._secrets.add(value)
         if len(encoded) > 4096:
             raise ValueError("指令超过设备 4096 字节接收限制")
         displayed = self._redact(payload)
@@ -445,10 +459,22 @@ class Console:
                 await self.send(payload)
         elif command == "group":
             action = args[0].lower() if args else "status"
-            if len(args) > 1 or action not in ("status", "on", "off"):
-                print("  用法：group [status|on|off]")
+            if len(args) > 2 or action not in ("status", "on", "off") or (action == "status" and len(args) != 1 and args):
+                print("  用法：group status | group on/off [标签或学号]")
             elif action == "status":
-                await self.send({"op": "status"})
+                op = "account.snapshot" if self.account_snapshot.get("accountMode") else "status"
+                await self.send({"op": op})
+            elif len(args) == 2 or self.account_snapshot.get("accountMode"):
+                try:
+                    rows = snapshot_accounts(self.account_snapshot)
+                    if len(args) == 1 and len(rows) != 1:
+                        raise ValueError("有多个账户时，请指定标签或学号")
+                    target = rows[0] if len(args) == 1 else resolve_account(rows, args[1])
+                    payload = patch_payload(self.account_snapshot, {'groupReport': action == "on"}, target)
+                except (ValueError, KeyError) as error:
+                    print(f"  {error}，可先执行 account list")
+                else:
+                    await self.send(payload)
             elif self.group_mode_known and self.group_mode is None:
                 print("  当前固件未提供小组模式，请升级后重试")
             else:
@@ -464,7 +490,30 @@ class Console:
         elif command == "account":
             sub = args[0].lower() if args else "list"
             if sub in ("list", "ls"):
+                await self.send({"op": "account.snapshot"})
+            elif sub == "summary":
                 await self.send({"op": "account.list"})
+            elif sub == "new":
+                if len(args) not in (3, 4) or (len(args) == 4 and args[3] != "personal"):
+                    print("  用法：account new <学号> <浏览器指纹> [personal]")
+                    return True
+                if self.account_snapshot.get("accountMode") is not True:
+                    print("  请先在新版固件执行 account list")
+                    return True
+                if not sys.stdin.isatty():
+                    print("  新建账户需要交互终端来隐藏密码输入")
+                    return True
+                if not re.fullmatch(r"[A-Fa-f0-9]{32}", args[2]):
+                    print("  指纹必须为 32 位十六进制")
+                    return True
+                password = await asyncio.to_thread(getpass, "账户密码（隐藏输入）：")
+                try:
+                    payload = patch_payload(self.account_snapshot, {'user': args[1], 'bfp': args[2],
+                        'pass': password, 'groupReport': len(args) == 3}, creating=True)
+                except ValueError as error:
+                    print(f"  {error}")
+                else:
+                    await self.send(payload)
             elif sub == "clear":
                 await self.send({"op": "account.clear"})
             elif sub in ("rm", "remove", "del"):
@@ -473,14 +522,12 @@ class Console:
                 else:
                     await self.send({"op": "account.remove", "label": args[1]})
             elif sub == "add":
-                if len(args) < 4:
-                    print("  用法：account add <标签> <学号> <密码> [指纹|-] [lat lng [地址…]]")
-                    print("        省略坐标 → 沿用设备当前坐标；指纹不需要就填 -")
+                if len(args) < 5 or not re.fullmatch(r"[A-Fa-f0-9]{32}", args[4]):
+                    print("  用法：account add <标签> <学号> <密码> <32 位浏览器指纹> [lat lng [地址…]]")
                 else:
                     payload = {"op": "account.add", "label": args[1],
                                "user": args[2], "pass": args[3]}
-                    if len(args) > 4 and args[4] != "-":
-                        payload["bfp"] = args[4]
+                    payload["bfp"] = args[4]
                     if len(args) >= 7:
                         try:
                             payload["lat"] = float(args[5])
@@ -498,7 +545,7 @@ class Console:
                     await self.send({"op": "account.enable", "label": args[1],
                                      "on": sub in ("on", "enable")})
             else:
-                print("  用法：account list | add | rm | on | off | clear")
+                print("  用法：account list | new | add | rm | on | off | clear")
         elif command == "multi":
             # multi → 按账号表跑一轮打卡；multi probe → 只体检不提交
             # multi <秒> → 设置账号之间的间隔；可组合 force（跳过"今日已打过"）

@@ -16,7 +16,7 @@ class DashboardLayout(unittest.TestCase):
         with patch('ble_dashboard.Backend'):
             self.app=Dashboard(self.root)
         self.app.connected=True
-        self.snapshot=dict(revision=10,accounts=[dict(slot=0,label='A',user='fixture-user',enabled=True,passwordSet=True,fingerprintSet=True)])
+        self.snapshot=dict(accountMode=True,revision=10,accounts=[dict(slot=0,label='A',user='fixture-user',enabled=True,passwordSet=True,fingerprintSet=True,groupReport=False)])
         self.app.consume(dict(msg='account snapshot',data=self.snapshot))
 
     def tearDown(self):
@@ -36,7 +36,7 @@ class DashboardLayout(unittest.TestCase):
                 self.select(category,spec[1]);self.root.update_idletasks()
 
     def test_target_snapshot_change_invalidates_qr_and_selection(self):
-        self.select('微信授权','wx.import');app=self.app
+        self.select('账户配置','wx.import');app=self.app
         app.match_text.set('A');app.resolve_target();app.check_target()
         app.state['vars']['access'].set('fixture-token')
         app.consume(dict(msg='account snapshot',data=dict(self.snapshot,revision=11)))
@@ -53,25 +53,20 @@ class DashboardLayout(unittest.TestCase):
         self.app.display_result(dict(data=dict(aps=[dict(ssid='same',bssid='a'),dict(ssid='same',bssid='b'),dict(ssid='',bssid='c')])))
         self.assertEqual(len(self.app.result_table.get_children()),3)
 
-    def test_group_mode_loads_device_value_and_requires_confirmation(self):
-        self.select('调度与执行', 'group.mode')
+    def test_default_and_saved_mode_are_independent(self):
         app = self.app
-        with patch('ble_dashboard.messagebox.showerror') as old:
-            app.send_current()
-            old.assert_called_once()
-        self.assertEqual(app.backend.request.call_count, 0)
-        app.consume(dict(msg='status', data=dict(cfg=dict(schedule=dict(groupReport=True)))))
-        self.assertTrue(app.state['vars']['enabled'].get())
-        app.state['vars']['enabled'].set(False)
-        with patch('ble_dashboard.messagebox.askyesno', return_value=False), patch.object(app, 'execute_payload') as send:
-            app.send_current()
-            send.assert_not_called()
+        self.select('账户配置', 'account.add')
+        self.assertTrue(app.state['vars']['groupReport'].get())
+        self.select('账户配置', 'account.patch')
+        app.match_text.set('A')
+        app.resolve_target()
+        self.assertFalse(app.state['vars']['groupReport'].get())
+        self.assertEqual(app.state['vars']['user'].get(), 'fixture-user')
+        app.state['vars']['groupReport'].set(True)
         with patch('ble_dashboard.messagebox.askyesno', return_value=True), patch.object(app, 'execute_payload') as send:
             app.send_current()
-            send.assert_called_once_with({'op': 'group.mode', 'enabled': False})
-        app.consume(dict(evt='ok', _operation='group.mode', data=dict(enabled=False)))
-        app.consume(dict(msg='status', data=dict(cfg=dict(schedule=dict(groupReport=False)))))
-        self.assertFalse(app.state['vars']['enabled'].get())
+            send.assert_called_once_with(dict(op='account.patch', create=False, target='A', expectedRevision=10,
+                                              fields=dict(groupReport=True)))
 
     def test_probe_and_selected_login_display_group_count(self):
         app = self.app
@@ -87,7 +82,7 @@ class DashboardLayout(unittest.TestCase):
         self.assertEqual(app.result_table.item(app.result_table.get_children()[0], 'values')[3], '小组待确认人数 0')
 
     def test_device_defaults_update_only_clean_form(self):
-        self.select('网络','wifi.set');app=self.app
+        self.select('设备与诊断','wifi.set');app=self.app
         app.consume(dict(msg='status',data=dict(cfg=dict(wifiSsid='device wifi'))))
         self.assertEqual(app.state['vars']['ssid'].get(),'device wifi')
         app.state['vars']['ssid'].set('user edit')

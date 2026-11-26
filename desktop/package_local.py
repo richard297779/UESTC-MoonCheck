@@ -34,13 +34,14 @@ def main():
     build = BASE/'build';build.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='smoke-',dir=build) as folder:
         assert Path(folder).resolve().is_relative_to(build.resolve())
-        cfg = default_config();cfg.update(student_id='fixture-student',password='fixture-password')
+        cfg = default_config();cfg.update(student_id='fixture-student', password='fixture-password',
+                                          browser_fingerprint='0123456789abcdef0123456789abcdef', group_report=False)
         config_path = Path(folder)/'config.json'
         config_path.write_text(json.dumps(cfg,ensure_ascii=False),encoding='utf-8')
         environment = os.environ.copy();environment['MOONCHECK_CONFIG'] = str(config_path)
         environment['TEMP'] = environment['TMP'] = folder
         for args in (['--version'], ['selftest'], ['checkin', '--dry-run'], ['wx', 'status'],
-                     ['config', 'set', 'schedule.group_report', 'true'], ['auto', '--dry-run']):
+                     ['config', 'set', 'group_report', 'true'], ['auto', '--dry-run']):
             result = subprocess.run([str(executable)]+args,env=environment,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=40)
             assert result.returncode == 0,'Frozen smoke command failed: '+str(args)+' '+ascii(result.stderr[:300])
             if args == ['--version']:assert version.encode() in result.stdout
@@ -53,8 +54,8 @@ def main():
 这是桌面端本地测试构建，未完成真实桌面账号联调；固件/Android 的确认不代表桌面已实测。
 
 1. 解压整个目录至本人可写、受保护的位置，双击 MoonCheck.exe。无需安装 Python。
-2. 使用新版安全员小组确认时，配置本人 CAS 登录，在「打卡时间」页开启小组确认并保存。用 status 查待确认人数。个人定位模式按下列步骤配置微信和位置。
-3. 基本页填写 CAS 学号、密码、本人浏览器指纹和现场坐标；保存配置。
+2. 在「账户配置」填写 CAS 学号、密码和 32 位浏览器指纹，应用后保存。新建账户默认勾选小组模式。用 status 查待确认人数。
+3. 个人定位账户取消勾选小组模式，并确认其定位和微信授权。
 4. 多人先新增账号并保存；微信授权页选择所属账号，填写本人 openid/access/refresh。到期 Unix 秒未知可填 0，导入立即保存。
 5. 初次微信授权仍由本人通过 QR Connect 准备。不要同时在固件、另一台电脑或授权网页刷新同一套授权。
 6. 先取票测试（不提交），再登录、查状态；允许窗口内真实打卡并复查。自动化由系统调度器调用 MoonCheck.exe auto，程序不会创建系统任务。

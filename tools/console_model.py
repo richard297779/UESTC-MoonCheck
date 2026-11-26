@@ -50,11 +50,20 @@ def resolve_account(rows, query, kind='auto'):
 
 def patch_payload(snapshot, values, target=None, creating=False):
     fields = {}
+    mode_supported = snapshot.get('accountMode') is True
+    if not creating and (not target or (target.get('primary') and not mode_supported)):
+        raise ValueError('请选择可编辑的账户')
+    if mode_supported and 'groupReport' in values:
+        mode = values['groupReport']
+        if type(mode) is not bool:
+            raise ValueError('小组模式须为布尔值')
+        if creating or target.get('groupReport') is not mode:
+            fields['groupReport'] = mode
     for key in ('label', 'user', 'pass', 'bfp', 'lat', 'lng', 'addr'):
         value = str(values.get(key, ''))
         if key in ('label', 'user', 'bfp', 'lat', 'lng'):
             value = value.strip()
-        if not value:
+        if not value or (not creating and key == 'user' and value == target.get('user')):
             continue
         if key in ('lat', 'lng'):
             value = float(value)
@@ -69,10 +78,14 @@ def patch_payload(snapshot, values, target=None, creating=False):
         raise ValueError('标签仅支持 1–12 位字母、数字、- 或 _')
     if 'bfp' in fields and not re.fullmatch(r'[A-Fa-f0-9]{32}', fields['bfp']):
         raise ValueError('指纹必须为 32 位十六进制')
-    if creating and not all(fields.get(k) for k in ('label', 'user', 'pass', 'bfp')):
-        raise ValueError('新账号必须填写标签、学号、密码和浏览器指纹')
-    if not creating and (not target or target.get('primary')):
-        raise ValueError('请选择已有账号；主账号使用设备设置中的基础账号配置')
+    identity_changed = not creating and 'user' in fields
+    if (creating or identity_changed) and not all(fields.get(k) for k in ('user', 'pass', 'bfp')):
+        raise ValueError('新建或更换学号须填写学号、密码和浏览器指纹')
+    if creating and not mode_supported and not fields.get('label'):
+        used = {row['label'] for row in snapshot_accounts(snapshot)}
+        fields['label'] = next(f'A{i:02d}' for i in range(1, 8) if f'A{i:02d}' not in used)
+    if mode_supported and not creating and target.get('fingerprintSet') is False and not fields.get('bfp'):
+        raise ValueError('请补齐该账户的浏览器指纹')
     return dict(op='account.patch', create=creating, expectedRevision=int(snapshot['revision']),
                 target='' if creating else target['label'], fields=fields)
 

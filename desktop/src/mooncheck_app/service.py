@@ -127,7 +127,7 @@ def _login_chain(cfg, log, acct):
 
 
 def _probe_account(cfg, client, api, log, acct):
-    if not config.group_report_enabled(cfg):
+    if not config.group_report_enabled(cfg, acct):
         ok, data, note = probe(client, api, log)
         return ok, data, note, not ok
     group = group_report.GroupReport(api, str(acct.get('student_id') or ''))
@@ -230,7 +230,7 @@ def do_status(cfg, log, label=None):
             rows.append(('%s' % acct.get('label'), '会话不可用：%s' % note))
             continue
         last_data = data
-        if config.group_report_enabled(cfg):
+        if config.group_report_enabled(cfg, acct):
             rows.append(('%s 小组待确认人数' % acct.get('label'), str(data['pending_count'])))
             continue
         summary = checkin_api.safe_summary(data)
@@ -257,7 +257,7 @@ def do_status(cfg, log, label=None):
                             one['radiusMeter'])))
             except Exception:
                 pass
-    if config.group_report_enabled(cfg):
+    if len(accounts) == 1 and config.group_report_enabled(cfg, accounts[0]):
         return Result(worst, '已查询小组待确认状态' if worst == 'ok' else '小组状态查询失败',
                       rows=rows, data=last_data)
     status = (last_data or {}).get('recordStatusCode')
@@ -269,7 +269,7 @@ def do_status(cfg, log, label=None):
 def _checkin_one(cfg, log, acct, force, use_reverse):
     """单账号打卡全链。返回 (kind, label, text, rows)。不抛异常。"""
     label = acct.get('label') or 'self'
-    if config.group_report_enabled(cfg):
+    if config.group_report_enabled(cfg, acct):
         today = config.datetime_now().date().isoformat()
         _client, api, ok, note, _data = _ensure_session(cfg, log, acct)
         if not ok:
@@ -369,7 +369,7 @@ def do_checkin(cfg, log, label=None, force=False, dry_run=False, use_reverse=Fal
         acct = resolve_account(cfg, label) if label else (accounts[0] if accounts else None)
         if acct is None:
             return Result('fail', '找不到账号 %s' % label if label else '没有启用的账号')
-        if config.group_report_enabled(cfg):
+        if config.group_report_enabled(cfg, acct):
             return Result('ok', 'DRY-RUN：小组批量确认（未联网）',
                           rows=[('账号', acct.get('label')),
                                 ('POST', group_report.REPORT),
@@ -492,7 +492,9 @@ def selftest(cfg, log):
 
     try:
         api = checkin_api.CheckinApi(None, cfg.get('app_id') or 294)
-        for acct in ([] if config.group_report_enabled(cfg) else accounts):
+        for acct in accounts:
+            if config.group_report_enabled(cfg, acct):
+                continue
             loc = config.account_location(cfg, acct)
             payload = api.build_payload(loc, DEFAULT_UA)
             missing = [k for k in ('latitude', 'longitude', 'clientTime', 'userAgent')

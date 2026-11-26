@@ -29,7 +29,6 @@ class App(object):
         self.work = copy.deepcopy(self.cfg)
         self.queue = queue.Queue()
         self.busy = False
-        self.show_pwd = False
 
         root.title('MoonCheck v%s · 电子科技大学晚间打卡' % __version__)
         root.geometry('1020x620')
@@ -51,8 +50,8 @@ class App(object):
         self.tab_accounts = ttk.Frame(self.notebook)
         self.tab_notify = ttk.Frame(self.notebook)
         self.tab_schedule = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_basic, text='基本')
-        self.notebook.add(self.tab_accounts, text='账号')
+        self.notebook.add(self.tab_accounts, text='账户配置')
+        self.notebook.add(self.tab_basic, text='设备与默认位置')
         self.notebook.add(self.tab_notify, text='推送')
         self.notebook.add(self.tab_schedule, text='打卡时间')
 
@@ -137,19 +136,8 @@ class App(object):
     # ------------------------------------------------------------ 基本页
 
     def _build_basic(self, parent):
-        ttk.Label(parent, text='单人模式凭证（账号表为空时生效）',
-                  font=('', 10, 'bold')).grid(
-            row=0, column=0, columnspan=3, sticky='w', **_ROW_PAD)
         self.vars = {}
-        row = 1
-        self.vars['student_id'] = self._entry_row(parent, row, '学号'); row += 1
-        self.pwd_var = tk.StringVar()
-        self.pwd_entry = self._entry_row(parent, row, '密码', secret=True, var=self.pwd_var)
-        row += 1
-        self.vars['browser_fingerprint'] = self._entry_row(parent, row, '浏览器指纹'); row += 1
-
-        sep = ttk.Separator(parent, orient='horizontal'); sep.grid(
-            row=row, column=0, columnspan=3, sticky='ew', pady=6); row += 1
+        row = 0
         ttk.Label(parent, text='默认位置（账号可各自覆盖）', font=('', 10, 'bold')).grid(
             row=row, column=0, columnspan=3, sticky='w', **_ROW_PAD); row += 1
         self.vars['location.latitude'] = self._entry_row(parent, row, '纬度'); row += 1
@@ -163,7 +151,7 @@ class App(object):
         self.vars['timeout'] = self._entry_row(parent, row, 'HTTP 超时(秒)'); row += 1
         self.session_var = tk.StringVar()
         ttk.Label(parent, text='会话 Cookie').grid(row=row, column=0, sticky='e')
-        ttk.Entry(parent, textvariable=self.session_var, width=34).grid(
+        ttk.Entry(parent, textvariable=self.session_var, width=34, show='*').grid(
             row=row, column=1, columnspan=2, sticky='w', **_ROW_PAD)
         row += 1
 
@@ -197,18 +185,24 @@ class App(object):
         side.grid(row=1, column=1, rowspan=8, sticky='n', **_ROW_PAD)
         self.acct_vars = {}
         r = 0
-        for name, label in (('label', '标签'), ('student_id', '学号'),
-                            ('password', '密码'), ('browser_fingerprint', '指纹')):
-            self.acct_vars[name] = self._entry_row(side, r, label,
-                                                   secret=(name == 'password'))
+        for name, label in (('student_id', '学号'), ('password', '密码'),
+                            ('browser_fingerprint', '浏览器指纹')):
+            self.acct_vars[name] = self._entry_row(side, r, label, secret=(name != 'student_id'))
             r += 1
+        self.acct_group = tk.BooleanVar(value=True)
+        ttk.Checkbutton(side, text='小组模式', variable=self.acct_group,
+                        command=self._show_acct_location).grid(row=r, column=0, columnspan=2, sticky='w')
+        self.acct_credentials = tk.StringVar()
+        ttk.Label(side, textvariable=self.acct_credentials).grid(row=r + 1, columnspan=3, sticky='w')
+        self.acct_location_frame = ttk.LabelFrame(side, text='个人定位配置')
+        self.acct_location_frame.grid(row=r + 2, columnspan=3, sticky='ew')
         self.acct_own_loc = tk.BooleanVar(value=False)
-        ttk.Checkbutton(side, text='该账号使用自己的坐标',
-                        variable=self.acct_own_loc).grid(
-            row=r, column=0, columnspan=2, sticky='w'); r += 1
-        self.acct_vars['lat'] = self._entry_row(side, r, '纬度'); r += 1
-        self.acct_vars['lng'] = self._entry_row(side, r, '经度'); r += 1
-        self.acct_vars['addr'] = self._entry_row(side, r, '地址'); r += 1
+        ttk.Checkbutton(self.acct_location_frame, text='使用本账户坐标',
+                        variable=self.acct_own_loc).grid(row=0, columnspan=2, sticky='w')
+        for row, (key, title) in enumerate((('lat', '纬度'), ('lng', '经度'), ('addr', '地址')), 1):
+            self.acct_vars[key] = self._entry_row(self.acct_location_frame, row, title)
+        ttk.Button(self.acct_location_frame, text='设置微信授权', command=self._acct_wechat).grid(row=4, columnspan=2)
+        self._show_acct_location()
 
         btns = ttk.Frame(parent)
         btns.grid(row=9, column=0, columnspan=2, sticky='w', **_ROW_PAD)
@@ -226,14 +220,32 @@ class App(object):
         last = ''
         if acct.get('last_msg'):
             last = '  [%s]' % str(acct.get('last_msg'))[:16]
-        return '%s %-8s %s%s' % (mark, acct.get('label'),
-                                 '指纹✓' if acct.get('browser_fingerprint') else '指纹✗', last)
+        mode = '小组确认' if config.group_report_enabled(self.work, acct) else '个人定位'
+        return '%s %s · %s%s' % (mark, acct.get('student_id') or acct.get('label'), mode, last)
+
+    def _show_acct_location(self):
+        if self.acct_group.get():
+            self.acct_location_frame.grid_remove()
+        else:
+            self.acct_location_frame.grid()
+
+    def _acct_wechat(self):
+        account = self._selected_acct()
+        if account and not config.group_report_enabled(self.work, account):
+            self.wx_account.set(account['label'])
+            self.notebook.select(self.tab_wechat)
+            self._wx_refresh_status()
+        else:
+            messagebox.showinfo('个人定位', '请先将该账户保存为个人定位模式。')
 
     def _refresh_acct_list(self, keep=None):
         self.acct_list.delete(0, 'end')
-        for acct in self.work.get('accounts') or []:
+        accounts = config.effective_accounts(self.work, only_enabled=False)
+        for acct in accounts:
             self.acct_list.insert('end', self._acct_row_text(acct))
-        if keep is not None and 0 <= keep < len(self.work.get('accounts') or []):
+        if keep is None:
+            keep = 0
+        if 0 <= keep < len(accounts):
             self.acct_list.selection_set(keep)
             self.acct_list.activate(keep)
 
@@ -245,18 +257,22 @@ class App(object):
         idx = self._acct_index()
         if idx < 0:
             return None
-        accounts = self.work.get('accounts') or []
+        accounts = config.effective_accounts(self.work, only_enabled=False)
         return accounts[idx] if idx < len(accounts) else None
 
     def _on_acct_select(self, _event=None):
         acct = self._selected_acct()
         if not acct:
             return
-        self.acct_vars['label'].set(acct.get('label') or '')
         self.acct_vars['student_id'].set(acct.get('student_id') or '')
-        self.acct_vars['password'].set(acct.get('password') or '')
-        self.acct_vars['browser_fingerprint'].set(acct.get('browser_fingerprint') or '')
-        loc = acct.get('location')
+        self.acct_vars['password'].set('')
+        self.acct_vars['browser_fingerprint'].set('')
+        self.acct_group.set(config.group_report_enabled(self.work, acct))
+        self._show_acct_location()
+        password = '密码已设置' if acct.get('password') else '密码未设置'
+        fingerprint = '指纹已设置' if acct.get('browser_fingerprint') else '指纹未设置'
+        self.acct_credentials.set(f'{password} · {fingerprint}。留空保留已有值。')
+        loc = self.work.get('location') if acct.get('_virtual') else acct.get('location')
         self.acct_own_loc.set(isinstance(loc, dict))
         loc = loc if isinstance(loc, dict) else {}
         self.acct_vars['lat'].set('' if loc.get('latitude') is None else str(loc.get('latitude')))
@@ -264,25 +280,18 @@ class App(object):
         self.acct_vars['addr'].set(loc.get('reverse_geocode') or '')
 
     def _acct_form_into(self, acct):
-        label = self.acct_vars['label'].get().strip()
-        if not label:
-            raise ValueError('标签不能为空')
-        import re
-        if not re.match(config._LABEL, label):
-            raise ValueError('标签只允许 A-Za-z0-9-_，≤12 字符')
-        dup = [a for a in self.work.get('accounts') or []
-               if a.get('label') == label and a is not acct]
-        if dup:
-            raise ValueError('标签重复：%s' % label)
-        acct['label'] = label
-        config.reset_identity(acct,self.acct_vars['student_id'].get().strip() or acct.get('student_id'))
-        for key in ('student_id', 'password', 'browser_fingerprint'):
-            value = self.acct_vars[key].get()
-            if key == 'password':
-                acct[key] = value or acct.get(key, '')
-            elif value.strip() or not acct.get(key):
-                acct[key] = value.strip()
-        if self.acct_own_loc.get():
+        user = self.acct_vars['student_id'].get().strip()
+        password = self.acct_vars['password'].get()
+        fingerprint = self.acct_vars['browser_fingerprint'].get().strip()
+        if user != acct.get('student_id') and (not password or not fingerprint):
+            raise ValueError('新建或更换学号时需填写密码和浏览器指纹')
+        password = password or acct.get('password') or ''
+        fingerprint = fingerprint or acct.get('browser_fingerprint') or ''
+        if not user or not password or not config._HEX32.fullmatch(fingerprint):
+            raise ValueError('须填写学号、密码和 32 位十六进制浏览器指纹')
+        group = self.acct_group.get()
+        changes = dict(student_id=user, password=password, browser_fingerprint=fingerprint, group_report=group)
+        if not group and self.acct_own_loc.get():
             loc = dict(config.LOCATION_DEFAULTS)
             try:
                 if self.acct_vars['lat'].get().strip():
@@ -293,20 +302,26 @@ class App(object):
                 raise ValueError('账号坐标必须是数字')
             if self.acct_vars['addr'].get().strip():
                 loc['reverse_geocode'] = self.acct_vars['addr'].get().strip()
-            acct['location'] = loc
-        else:
-            acct['location'] = None
+            changes['location'] = loc
+        elif not group and not acct.get('_virtual'):
+            changes['location'] = None
+        target = self.work if acct.get('_virtual') else acct
+        config.reset_identity(target, user)
+        target.update(changes)
 
     def _on_acct_add(self):
         accounts = self.work.setdefault('accounts', [])
+        if not accounts and not config.account_credentials_set(self.work):
+            self._refresh_acct_list(keep=0)
+            self._on_acct_select()
+            return
         if len(accounts) >= config.MAX_ACCOUNTS:
             messagebox.showerror('上限', '最多 %d 个账号（与固件一致）' % config.MAX_ACCOUNTS)
             return
-        accounts.append(dict(config.ACCOUNT_TEMPLATE))
+        config.promote_primary(self.work)
+        accounts.append(dict(config.ACCOUNT_TEMPLATE, label=config.next_account_label(self.work)))
         self._refresh_acct_list(keep=len(accounts) - 1)
-        self.acct_vars['label'].set('')
-        for k in ('student_id', 'password', 'browser_fingerprint', 'lat', 'lng', 'addr'):
-            self.acct_vars[k].set('')
+        self._on_acct_select()
 
     def _on_acct_apply(self):
         acct = self._selected_acct()
@@ -319,20 +334,28 @@ class App(object):
             messagebox.showerror('账号有误', str(e))
             return
         self._refresh_acct_list(keep=self._acct_index())
+        self._on_acct_select()
 
     def _on_acct_remove(self):
         idx = self._acct_index()
         acct = self._selected_acct()
         if acct is None:
             return
+        if acct.get('_virtual'):
+            messagebox.showinfo('主账号', '可以编辑主账号，或通过打卡计划暂停运行。')
+            return
         if not messagebox.askyesno('删除', '删除账号 %s？其会话一并清除。' % acct.get('label')):
             return
         self.work['accounts'].pop(idx)
         self._refresh_acct_list()
+        self._on_acct_select()
 
     def _on_acct_toggle(self):
         acct = self._selected_acct()
         if acct is None:
+            return
+        if acct.get('_virtual'):
+            messagebox.showinfo('主账号', '主账号由原有自动任务设置控制。')
             return
         idx = self._acct_index()
         acct['enabled'] = not acct.get('enabled', True)
@@ -546,10 +569,6 @@ class App(object):
         self.sched_end = tk.StringVar()
         self._label_entry_row(parent, 1, '开始 (HH:MM)', self.sched_at)
         self._label_entry_row(parent, 2, '截止 (HH:MM)', self.sched_end)
-        self.group_report = tk.BooleanVar(value=False)
-        ttk.Checkbutton(parent, text='安全员小组确认（适用于所有启用账号）',
-                        variable=self.group_report).grid(
-            row=5, column=0, columnspan=2, sticky='w', **_ROW_PAD)
         self.sched_hint = ttk.Label(parent, text='', foreground='#555')
         self.sched_hint.grid(row=3, column=0, columnspan=2, sticky='w', padx=8, pady=8)
         ttk.Label(parent, text='提示：固件端 21:00 预登录是设备行为；桌面端直接按窗口执行，\n'
@@ -601,7 +620,6 @@ class App(object):
         for key, var in self.vars.items():
             value = config.get(cfg, key)
             var.set('' if value is None else str(value))
-        self.pwd_var.set(cfg.get('password') or '')
         sess = cfg.get('session_cookie') or ''
         self.session_var.set(sess)
         notify = cfg.get('notify') or {}
@@ -611,8 +629,8 @@ class App(object):
         sched = cfg.get('schedule') or {}
         self.sched_at.set(sched.get('checkin_at') or '22:00')
         self.sched_end.set(sched.get('window_end') or '23:30')
-        self.group_report.set(config.group_report_enabled(cfg))
         self._refresh_acct_list()
+        self._on_acct_select()
         labels = [a['label'] for a in config.effective_accounts(self.work,only_enabled=False)]
         self.wx_picker['values'] = labels
         if self.wx_account.get() not in labels: self.wx_account.set(labels[0] if labels else '')
@@ -634,8 +652,6 @@ class App(object):
                 config.set_value(cfg, key, raw)
             except (ValueError, TypeError) as e:
                 errors.append('%s: %s' % (key, e))
-        if self.pwd_var.get():
-            cfg['password'] = self.pwd_var.get()
         sess = self.session_var.get().strip()
         if sess.startswith('SESSION='):
             sess = sess.split('=', 1)[1]
@@ -647,7 +663,6 @@ class App(object):
         if url:
             notify['url'] = url
         notify['style'] = int(self.notify_style.get().split(' ')[0])
-        cfg.setdefault('schedule', {})['group_report'] = self.group_report.get()
         for key, var in (('checkin_at', self.sched_at), ('window_end', self.sched_end)):
             text = var.get().strip()
             if text:

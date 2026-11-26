@@ -3,8 +3,9 @@ import datetime
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
@@ -160,6 +161,54 @@ class GroupReportTests(unittest.TestCase):
             result = service.do_auto(self.cfg, lambda _msg: None)
         self.assertEqual(result.kind, 'warn')
         self.assertEqual(portal.posts, [])
+
+    def test_mixed_schedule_uses_each_accounts_own_flow(self):
+        self.cfg.update(browser_fingerprint='0123456789abcdef0123456789abcdef')
+        config.promote_primary(self.cfg)
+        self.cfg['accounts'].append(dict(config.ACCOUNT_TEMPLATE, label='A02', student_id='fixture-personal',
+                                         password='fixture-password', group_report=False))
+        officer, personal = self.cfg['accounts']
+        portal = FixturePortal([pending_row(1)])
+        personal_client = Mock(ua='fixture-ua')
+        personal_api = Mock()
+        personal_api.submit.return_value = Resp(200, {}, b'{"code":0}', BASE)
+
+        def session(cfg, log, acct, *args, **kwargs):
+            if acct is officer:
+                return None, service._api(cfg, portal), True, '', {}
+            self.assertIs(acct, personal)
+            return personal_client, personal_api, True, '', {'recordStatusCode': 'PENDING'}
+
+        with patch.object(service, '_ensure_session', side_effect=session), \
+             patch.object(config, 'datetime_now', return_value=NOW), \
+             patch.object(service.wechat, 'validate_credentials'), \
+             patch.object(service.wechat, 'ensure_ticket', return_value='fixture-ticket') as ticket, \
+             patch.object(service, 'probe', return_value=(True, {'recordStatusCode': 'CHECKED_IN'}, '')), \
+             patch.object(config, 'save_account_result'):
+            result = service.do_auto(self.cfg, lambda _msg: None)
+        self.assertTrue(result.ok)
+        self.assertIs(ticket.call_args.args[1], personal)
+        personal_api.submit.assert_called_once()
+        self.assertEqual(portal.posts, [[{'recordId': 'record-1', 'action': 'NORMAL'}]])
+
+    def test_legacy_modes_migrate_without_overriding_explicit_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'config.json'
+            with patch.dict('os.environ', MOONCHECK_CONFIG=str(path)):
+                for legacy_group in (True, False, None):
+                    schedule = {} if legacy_group is None else {'group_report': legacy_group}
+                    path.write_text(json.dumps(dict(config_schema=2, student_id=OWNER, schedule=schedule,
+                        accounts=[dict(label='A01', student_id='fixture-one'),
+                                  dict(label='A02', student_id='fixture-two', group_report=False)])), encoding='utf-8')
+                    migrated = config.load()
+                    self.assertIs(migrated['group_report'], bool(legacy_group))
+                    self.assertIs(migrated['accounts'][0]['group_report'], bool(legacy_group))
+                    self.assertIs(migrated['accounts'][1]['group_report'], False)
+                    self.assertNotIn('group_report', migrated['schedule'])
+                    config.save(migrated)
+                    self.assertEqual(config.load(), migrated)
+                path.write_text('{"config_schema":2,"schedule":{"group_report":false}}', encoding='utf-8')
+                self.assertTrue(config.load()['group_report'])
 
     def test_status_and_dry_run_use_group_mode(self):
         portal = FixturePortal([pending_row(1)])

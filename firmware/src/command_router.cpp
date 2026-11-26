@@ -384,17 +384,23 @@ void CommandRouter::dispatchCommand(const String& line) {
   } else if (op == "auto.set") {
     handleAutoSet(request, id);
   } else if (op == "group.mode") {
-    if (m_config == nullptr) {
-      replyError(id, Result::NotReady, "config unavailable");
-    } else if (!request["enabled"].is<bool>()) {
-      replyError(id, Result::InvalidParam, "enabled must be boolean");
-    } else {
-      const bool enabled = request["enabled"].as<bool>();
-      const Result result = m_config->setGroupReport(enabled);
-      if (result != Result::Ok) replyError(id, result, "group mode save failed");
-      else replyOk(id, enabled ? "group reporting enabled" : "group reporting disabled",
-                   enabled ? "{\"enabled\":true}" : "{\"enabled\":false}");
+    if (!m_accounts || !m_config) { replyError(id, Result::NotReady, "account store not ready"); return; }
+    if (!request["enabled"].is<bool>()) { replyError(id, Result::InvalidParam, "enabled must be boolean"); return; }
+    String target = request["target"] | "";
+    if (!target.length()) {
+      if (m_accounts->count() > 1) {
+        replyError(id, Result::InvalidParam, "choose an account in account settings"); return;
+      }
+      CheckinProfile only;
+      target = m_accounts->get(0, only) ? only.label : String("@primary");
+    } else if (!request["expectedRevision"].is<uint32_t>()) {
+      replyError(id, Result::InvalidParam, "target requires account snapshot revision"); return;
     }
+    JsonDocument patch;
+    patch["target"] = target;
+    patch["expectedRevision"] = m_accounts->revision();
+    patch["fields"]["groupReport"] = request["enabled"].as<bool>();
+    handleAccountPatch(patch.as<JsonObjectConst>(), id);
   } else if (op == "notify.set") {
     handleNotifySet(request, id);
   } else if (op == "notify.status") {
@@ -438,6 +444,7 @@ void CommandRouter::dispatchCommand(const String& line) {
       if (result != Result::Ok) {
         replyError(id, result, "account not found");
       } else {
+        refreshAccountContext();
         replyOk(id, "account removed");
       }
     }
@@ -446,6 +453,7 @@ void CommandRouter::dispatchCommand(const String& line) {
   } else if (op == "account.clear") {
     if (!clearAccountAuthorizations(id)) return;
     if (m_accounts == nullptr || m_accounts->clearAll()!=Result::Ok) { replyError(id,Result::StorageError,"clear accounts failed"); return; }
+    refreshAccountContext();
     replyOk(id, "accounts cleared");
   } else if (op == "multi.set") {
     handleMultiSet(request, id);
@@ -557,7 +565,7 @@ void CommandRouter::handleHello(int32_t id) {
            "\"btMac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
            "\"bleName\":\"%s-%02X%02X\","
            "\"flashMB\":%u,\"psramKB\":%u,\"caps\":[\"wifi\",\"ble\",\"cas\",\"checkin\",\"test\","
-           "\"cron\",\"logs\",\"account-v2\",\"selected-execution\",\"group-report\"]}",
+           "\"cron\",\"logs\",\"account-v2\",\"selected-execution\",\"group-report\",\"account-mode\"]}",
            BoardProfile::kId, FW_VERSION, FW_PROTO_VERSION, FW_BUILD_TIME, mac[0], mac[1], mac[2], mac[3], mac[4],
            mac[5], btMac[0], btMac[1], btMac[2], btMac[3], btMac[4], btMac[5],
            FW_DEVICE_NAME_PREFIX, btMac[4], btMac[5],
@@ -579,20 +587,29 @@ void CommandRouter::handleAuthSet(JsonObjectConst request, int32_t id) {
     replyError(id, Result::InvalidParam, "user and pass required");
     return;
   }
-  const bool identityChanged=m_config->storedProfile().studentId!=user;
+  auto profile = m_config->storedProfile();
+  const bool identityChanged = profile.studentId != user;
+  JsonDocument fields;
+  fields["user"] = user;
+  fields["pass"] = password;
+  fields["bfp"] = fingerprint;
+  const char* error = "invalid account credentials";
+  if (fields.overflowed() || !mergeAccountPatch(profile, fields.as<JsonObjectConst>(), false, error)) {
+    replyError(id, Result::InvalidParam, error); return;
+  }
   if (identityChanged && m_accounts && !m_accounts->hasAny() && m_wxCred && m_wxCred->remove(0)!=Result::Ok) {
     replyError(id,Result::StorageError,"cannot clear prior authorization; auth unchanged"); return;
   }
-  const Result result = m_config->setAuth(user, password, fingerprint);
+  const Result result = m_config->setPrimaryProfile(profile);
   if (result != Result::Ok) {
     replyError(id, result, "save auth failed");
     return;
   }
   char data[96];
   snprintf(data, sizeof(data), "{\"fingerprintSet\":%s}",
-           fingerprint.length() > 0 ? "true" : "false");
+           profile.hasFingerprint() ? "true" : "false");
   if (m_accounts) m_accounts->invalidateRevision();
-  if(identityChanged) { m_cookies->clear(); m_checkin->resetLoginState(); m_api->clearOperationTicket(); }
+  refreshAccountContext();
   replyOk(id, "auth saved", data);
 }
 
@@ -605,6 +622,7 @@ void CommandRouter::handleAccountSnapshot(int32_t id) {
     JsonObject row=doc["primary"].to<JsonObject>();
     row["slot"]=0; row["label"]="@primary"; row["user"]=p.studentId;
     row["passwordSet"]=p.password.length()>0; row["fingerprintSet"]=p.hasFingerprint(); row["enabled"]=true;
+    row["groupReport"]=p.groupReport;
     row["lat"]=p.latitude; row["lng"]=p.longitude; row["addr"]=p.address;
   }
   if(doc.overflowed()) { replyError(id,Result::InternalError,"account snapshot allocation failed"); return; }
@@ -620,20 +638,41 @@ bool CommandRouter::clearAccountAuthorizations(int32_t id) {
   return true;
 }
 
+void CommandRouter::refreshAccountContext() {
+  if (!m_config) return;
+  m_config->applyProfile(m_config->storedProfile());
+  for (size_t index = 0; m_accounts && index < m_accounts->count(); ++index) {
+    CheckinProfile profile;
+    if (m_accounts->get(index, profile) && profile.enabled) {
+      m_config->applyProfile(profile);
+      break;
+    }
+  }
+  m_cookies->clear();
+  m_checkin->resetLoginState();
+  m_api->clearOperationTicket();
+}
+
 void CommandRouter::handleAccountPatch(JsonObjectConst request,int32_t id) {
   if (!m_accounts || !m_config || !request.containsKey("expectedRevision") || !request["fields"].is<JsonObjectConst>()) {
     replyError(id,Result::InvalidParam,"account patch requires snapshot revision and fields"); return;
   }
   const bool creating=request["create"] | false;
   const String target=request["target"] | "";
+  const bool primary = !creating && !m_accounts->hasAny() && target == "@primary";
   const int index=m_accounts->indexOfLabel(target);
+  const auto defaults = m_config->storedProfile();
   CheckinProfile previous, profile;
-  if (!creating && (index<0 || !m_accounts->get(index,previous))) { replyError(id,Result::NotFound,"account not found"); return; }
-  if (creating) {
-    const auto defaults=m_config->storedProfile();
-    profile.latitude=defaults.latitude; profile.longitude=defaults.longitude; profile.address=defaults.address;
-  } else profile=previous;
+  if (primary) previous = defaults;
+  else if (!creating && (index<0 || !m_accounts->get(index,previous))) {
+    replyError(id,Result::NotFound,"account not found"); return;
+  }
   JsonObjectConst fields=request["fields"].as<JsonObjectConst>();
+  if (creating) profile.label = m_accounts->nextLabel();
+  else profile=previous;
+  if (primary && fields["label"].is<const char*>() && strlen(fields["label"].as<const char*>()) != 0) {
+    replyError(id, Result::InvalidParam, "primary label is managed by the device"); return;
+  }
   bool changed=false;
   for (JsonPairConst field:fields) if (!field.value().is<const char*>() || strlen(field.value().as<const char*>())>0) changed=true;
   if (!changed) { replyError(id,Result::InvalidParam,"no changed fields"); return; }
@@ -650,13 +689,20 @@ void CommandRouter::handleAccountPatch(JsonObjectConst request,int32_t id) {
     profile.lastGroupReport = false;
     profile.lastMsg = "";
   }
-  const int authorizationSlot=creating?static_cast<int>(m_accounts->count()):index;
+  CheckinProfile preserved = defaults;
+  const bool promote = creating && !m_accounts->hasAny() && preserved.studentId.length() &&
+                       preserved.password.length();
+  if (promote) preserved.label = m_accounts->nextLabel(profile.label);
+  const int authorizationSlot = primary ? 0 : creating ? (promote ? 1 : static_cast<int>(m_accounts->count())) : index;
   if (m_wxCred && (creating || identityChanged) && m_wxCred->remove(authorizationSlot)!=Result::Ok) {
     replyError(id,Result::StorageError,"cannot clear prior authorization; account unchanged"); return;
   }
-  const Result saved=creating?m_accounts->addOrUpdate(profile):m_accounts->replaceAt(index,profile);
+  const Result saved = primary ? m_config->setPrimaryProfile(profile) :
+      creating ? m_accounts->addOrUpdate(profile, promote ? &preserved : nullptr) :
+                 m_accounts->replaceAt(index, profile);
   if (saved!=Result::Ok) { replyError(id,saved,"save account patch failed"); return; }
-  if (identityChanged) { m_cookies->clear(); m_checkin->resetLoginState(); m_api->clearOperationTicket(); }
+  if (primary) m_accounts->invalidateRevision();
+  refreshAccountContext();
   bool linksOk=true;
   if (!creating && previous.label!=profile.label) {
     for(size_t i=0;i<m_config->notifyChannelCount();++i) {
@@ -670,7 +716,9 @@ void CommandRouter::handleAccountPatch(JsonObjectConst request,int32_t id) {
     }
   }
   JsonDocument output;
-  output["label"]=profile.label; output["revision"]=m_accounts->revision();
+  output["label"] = primary ? String("@primary") : profile.label;
+  output["groupReport"] = profile.groupReport;
+  output["revision"]=m_accounts->revision();
   output["authorizationCleared"]=creating||identityChanged; output["notificationLinksUpdated"]=linksOk;
   String out; serializeJson(output,out);
   replyOk(id,linksOk?"account patch saved":"account saved; notification links need manual repair",out);
@@ -705,7 +753,7 @@ void CommandRouter::handleSelected(JsonObjectConst request,int32_t id) {
     else if(op=="test.checkin" || !(request["probe"] | true)) workTestCheckin(item);
     else { workTestLogin(item); if(m_capturedOk) workTestProbe(item); }
     m_captureReply=false;
-    JsonObject row=rows.add<JsonObject>(); row["label"]=profile.label; row["operation"]=op; row["ok"]=m_capturedOk; row["msg"]=m_capturedMessage;
+    JsonObject row=rows.add<JsonObject>(); row["label"]=profile.label; row["groupReport"]=profile.groupReport; row["operation"]=op; row["ok"]=m_capturedOk; row["msg"]=m_capturedMessage;
     if(m_capturedData.length()) {
       JsonDocument detail;
       if(!deserializeJson(detail,m_capturedData)) {
@@ -781,12 +829,13 @@ void CommandRouter::handleAccountAdd(JsonObjectConst request, int32_t id) {
   // （否则"改个密码"会把被关掉的账号偷偷重新打开，当晚就多打一次卡）。
   profile.enabled = request["enabled"] | true;
   const int existingIndex = m_accounts->indexOfLabel(profile.label);
-  if (existingIndex >= 0 && !request.containsKey("enabled")) {
-    CheckinProfile existing;
-    if (m_accounts->get(static_cast<size_t>(existingIndex), existing)) {
-      profile.enabled = existing.enabled;
-    }
+  CheckinProfile prior;
+  const bool exists = existingIndex >= 0 && m_accounts->get(existingIndex, prior);
+  if (exists && !request["enabled"].is<bool>()) profile.enabled = prior.enabled;
+  if (!request["groupReport"].isUnbound() && !request["groupReport"].is<bool>()) {
+    replyError(id, Result::InvalidParam, "groupReport must be boolean"); return;
   }
+  profile.groupReport = request["groupReport"] | (exists ? prior.groupReport : true);
   profile.studentId = String(request["user"] | "");
   profile.password = String(request["pass"] | "");
   profile.fingerprint = String(request["bfp"] | "");
@@ -799,15 +848,21 @@ void CommandRouter::handleAccountAdd(JsonObjectConst request, int32_t id) {
     profile.longitude = m_config->location().longitude;
     if (profile.address.length() == 0) profile.address = m_config->location().address;
   }
-  // 没给指纹就沿用设备当前配置的指纹（同一台设备共用一个"信任浏览器"也许可行，
-  // 但更稳妥的是每个账号各用自己浏览器的指纹）
-  CheckinProfile prior;
-  const bool identityChanged=existingIndex>=0 && m_accounts->get(existingIndex,prior) && prior.studentId!=profile.studentId;
-  const int slot=existingIndex>=0?existingIndex:static_cast<int>(m_accounts->count());
+  const bool identityChanged = exists && prior.studentId != profile.studentId;
+  if (exists && !identityChanged && !profile.fingerprint.length()) profile.fingerprint = prior.fingerprint;
+  JsonDocument validation;
+  const char* error = "";
+  if (!mergeAccountPatch(profile, validation.to<JsonObject>(), true, error)) {
+    replyError(id, Result::InvalidParam, error); return;
+  }
+  CheckinProfile primary = m_config->storedProfile();
+  const bool promote = !exists && !m_accounts->hasAny() && primary.studentId.length() && primary.password.length();
+  if (promote) primary.label = m_accounts->nextLabel(profile.label);
+  const int slot = exists ? existingIndex : promote ? 1 : static_cast<int>(m_accounts->count());
   if ((identityChanged || existingIndex<0) && slot<static_cast<int>(AccountStore::kMaxProfiles) && m_wxCred && m_wxCred->remove(slot)!=Result::Ok) {
     replyError(id,Result::StorageError,"cannot clear prior authorization; account unchanged"); return;
   }
-  const Result result = m_accounts->addOrUpdate(profile);
+  const Result result = m_accounts->addOrUpdate(profile, promote ? &primary : nullptr);
   if (result == Result::InvalidParam) {
     replyError(id, result,
                "invalid: label A-Z a-z 0-9 - _ (1..12), user+pass required, max 6 accounts");
@@ -817,6 +872,7 @@ void CommandRouter::handleAccountAdd(JsonObjectConst request, int32_t id) {
     replyError(id, result, "save account failed");
     return;
   }
+  refreshAccountContext();
   char data[128];
   snprintf(data, sizeof(data), "{\"count\":%u,\"max\":%u}",
            static_cast<unsigned>(m_accounts->count()),
@@ -874,6 +930,7 @@ void CommandRouter::handleAccountEnable(JsonObjectConst request, int32_t id) {
            label.c_str(), on ? "true" : "false",
            static_cast<unsigned>(m_accounts->enabledCount()),
            static_cast<unsigned>(m_accounts->count()));
+  refreshAccountContext();
   replyOk(id, on ? "account enabled" : "account disabled", data);
 }
 
@@ -1305,6 +1362,13 @@ void CommandRouter::workTestProbe(const WorkItem& item) {
 }
 
 void CommandRouter::workTestCheckin(const WorkItem& item) {
+  if (m_accounts && m_accounts->hasAny()) {
+    CheckinProfile active;
+    const int index = m_accounts->indexOfLabel(m_config->activeAccount());
+    if (index < 0 || !m_accounts->get(index, active) || !active.enabled) {
+      replyError(item.requestId, Result::InvalidParam, "choose an enabled account"); return;
+    }
+  }
   setBusy(true);
   emitEvent("progress", "\"stage\":\"checkin\",\"detail\":\"start\"");
 
@@ -1327,7 +1391,7 @@ void CommandRouter::workTestCheckin(const WorkItem& item) {
   if ((outcome == CheckinOutcome::Success) || (outcome == CheckinOutcome::AlreadyDone) ||
       (outcome == CheckinOutcome::Failed)) {
     if (m_config != nullptr) {
-      if (soleAccount) m_config->setLastResult(todayKey, ok, message);
+      if (soleAccount) m_config->setLastResult(todayKey, ok, message, !m_accounts || !m_accounts->hasAny());
       if (m_accounts != nullptr && m_accounts->indexOfLabel(who)>=0) {
         m_accounts->setResult(m_config->activeAccount(), todayKey, ok, message,
                               m_config->groupReportEnabled());
@@ -1454,11 +1518,7 @@ void CommandRouter::workMultiCheckin(const WorkItem& item) {
     replyOk(item.requestId, message, run.summary);
   }
 
-  // ★ 必须把"整轮结论"写进 AppConfig::last —— 调度器的重试闸门与 DeadlineMissed
-  //   判定都只看 isLastResultOkFor(today)。
-  //   分母**只能**用生效账号数：把单独关闭的账号算进去，就永远凑不满 allOk，
-  //   于是"全员成功仍整夜每 180 s 重跑一轮"的老 bug 会换个形式复发。
-  //   体检（probeOnly）不提交打卡，因此**不能**写这个结论。
+  // 最近记录供界面显示。账号表的调度完成判据使用各账号自己的模式和结果。
   const bool allOk = (total > 0 && okCount >= total);
   // 账号都在、但被**逐个单独关闭**了（enabledTotal==0）= 今晚没有需要打卡的人。
   // 必须把它当成「今晚已了结」写进 last，否则调度器会空转重试到 23:30，
@@ -1466,7 +1526,7 @@ void CommandRouter::workMultiCheckin(const WorkItem& item) {
   const bool nothingToDo = (total == 0 && run.total > 0);
   const bool settled = allOk || nothingToDo;
   if (!probeOnly && m_config != nullptr && m_time != nullptr && m_time->isSynced()) {
-    m_config->setLastResult(m_time->todayString(), settled, message);
+    m_config->setLastResult(m_time->todayString(), settled, message, !m_accounts || !m_accounts->hasAny());
     LOG_I(kTag, "aggregate saved: %u/%u ok -> last=%s", static_cast<unsigned>(okCount),
           static_cast<unsigned>(total), settled ? "confirmed" : "pending retry");
   }
@@ -1736,8 +1796,7 @@ void CommandRouter::workDeadlineMissed(const WorkItem& item) {
     CheckinProfile profile;
     for (size_t i = 0; i < m_accounts->count(); i++) {
       if (!m_accounts->get(i, profile) || !profile.enabled) continue;
-      const bool groupReport = m_config != nullptr && m_config->groupReportEnabled();
-      if (m_accounts->isCheckedInToday(profile.label, today, groupReport)) continue;
+      if (m_accounts->isCheckedInToday(profile.label, today, profile.groupReport)) continue;
       String oneBody = profile.label + "：窗口已关闭，今天仍未打卡成功。";
       if (profile.lastMsg.length() > 0 && profile.lastDate == today) {
         oneBody += "最后原因：" + profile.lastMsg;
@@ -1864,13 +1923,15 @@ void CommandRouter::workWxTest(const WorkItem& item) {
 // ---------------------------------------------------------------- 窗口起点取号
 
 void CommandRouter::workWxPrefetch(const WorkItem& item) {
-  // 首个启用账号未必是槽位 0；预取也必须验证当前身份与账号标签。
-  if (m_wxCred == nullptr || m_api == nullptr || m_config == nullptr ||
-      m_config->groupReportEnabled()) return;
-  const String owner = m_config->auth().studentId;
-  const int slot=m_accounts?activeAuthorizationSlot<CheckinProfile>(*m_accounts,m_config->activeAccount(),owner):0;
-  if(slot<0) { LOG_W("wx_prefetch","active account mapping unavailable; defer to account runner"); return; }
-  if (m_api->hasFreshTicketFor(owner)) {
+  if (!m_wxCred || !m_api || !m_config) return;
+  CheckinProfile profile;
+  int slot = 0;
+  if (m_accounts && m_accounts->hasAny()) {
+    slot = m_accounts->firstEnabledPersonalSlot();
+    if (slot < 0 || !m_accounts->get(slot, profile)) return;
+  } else profile = m_config->storedProfile();
+  if (profile.groupReport || !profile.studentId.length()) return;
+  if (m_api->hasFreshTicketFor(profile.label, profile.studentId)) {
     LOG_I("wx_prefetch", "fresh ticket already installed, skip");
     return;
   }
@@ -1878,8 +1939,8 @@ void CommandRouter::workWxPrefetch(const WorkItem& item) {
   String error;
   LOG_I("wx_prefetch", "prefetching wx ticket for slot %d",slot);
   if (ensureWxTicket(slot, ticket, error) == Result::Ok && ticket.length() == 43) {
-    m_api->setOperationTicket(ticket, owner);
-    LOG_I("wx_prefetch", "ticket installed (43 chars) for owner %.8s", owner.c_str());
+    m_api->setOperationTicket(ticket, profile.label, profile.studentId);
+    LOG_I("wx_prefetch", "ticket installed (43 chars) for slot %d", slot);
   } else {
     LOG_W("wx_prefetch", "prefetch failed: %s", error.c_str());
   }

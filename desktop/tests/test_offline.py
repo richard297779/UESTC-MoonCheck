@@ -93,7 +93,10 @@ class TestConfig(unittest.TestCase):
         errs = [p for p in config.validate(cfg) if p[0] == 'error']
         self.assertEqual(errs, [])
         warns = [p for p in config.validate(cfg) if p[0] == 'warn']
-        self.assertTrue(any(w[1] == 'location' for w in warns))  # 示例坐标提醒
+        self.assertFalse(any(w[1].endswith('location') for w in warns))
+        cfg['group_report'] = False
+        warns = [p for p in config.validate(cfg) if p[0] == 'warn']
+        self.assertTrue(any(w[1].endswith('location') for w in warns))  # 示例坐标提醒
 
 
 class TestPayload(unittest.TestCase):
@@ -148,6 +151,10 @@ class TestCliOffline(unittest.TestCase):
 
     def test_checkin_dry_run_offline(self):
         self._run(['config', 'init'])
+        proc = self._run(['checkin', '--dry-run'])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn('"action":"NORMAL"', proc.stdout)
+        self._run(['config', 'set', 'group_report', 'false'])
         proc = self._run(['checkin', '--dry-run'])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn('latitude', proc.stdout)

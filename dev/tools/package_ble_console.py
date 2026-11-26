@@ -36,22 +36,22 @@ def build_archive(output, version, source_commit, source_dirty, repository='rich
 也可执行 python tools/ble_console.py --gui；原命令行使用 --cli。
 
 扫描并核对本人设备后连接。四栏目为设备概览、账号列表、查询与配置、开发者完整回执。
-账号修改留空保留；新建须填标签、学号、密码与浏览器指纹。微信扫码先匹配目标，确认后只填表。
+「查询与配置」有账户配置、今日打卡、计划与通知、设备与诊断四类。新建填写学号、密码与浏览器指纹，默认勾选小组模式。编辑时密码和指纹留空保留。个人定位账户取消勾选，按需配置位置及微信授权。
 登录、链路检查、打卡和演练需勾选目标；已禁用账号须先启用。结果以设备回执为准，超时不自动重放。
 
-请配合 {version} 固件（协议 1，account-v2 / selected-execution）。旧固件可查看原状态，新功能提示升级。
+请配合 {version} 固件（协议 1，account-v2 / selected-execution / account-mode）。旧固件可查看原状态，新功能提示升级。
 学号在账号表完整显示，密码、指纹与令牌不回读；敏感输入和日志不写入磁盘。
 不读取系统浏览器 Cookie。扫码需电脑联网，实际授权必须由账号本人完成。
 依赖通过 pip 安装，ZIP 不含 Python、第三方库、密钥或本机配置。
 
 使用指南：https://github.com/{repository}/blob/v{version}/docs/ble-gui.md
 源码及逐文件摘要见 manifest.json。
-小组确认：查询与配置 → 调度与执行 → 打卡模式。完成登录检查后看前置体检中的待确认人数。
-命令行支持 group status、group on、group off 与 probe。
+在「今日打卡 → 登录测试」选择小组账号检查待确认人数。
+命令行可用 account list 查看各账户，通过 group on <账号> 或 group off <账号> 切换模式。
 '''.encode('utf-8')
     manifest = dict(version=version, component='ble-console-source',
                     firmwareCompatibility=f'{version} / protocol 1',
-                    requiredCapabilities=['account-v2', 'selected-execution'],
+                    requiredCapabilities=['account-v2', 'selected-execution', 'account-mode'],
                     sourceCommit=source_commit, sourceDirty=source_dirty,
                     files=[dict(name=name, size=len(data), sha256=digest(data)) for name, data in files.items()])
     files['manifest.json'] = (json.dumps(manifest, indent=2) + '\n').encode('utf-8')
@@ -80,7 +80,7 @@ def validate_archive(path, version, source_commit, source_dirty=False):
             if Path(entry['name']).suffix in {'.py', '.pyw'}:
                 ast.parse(data.decode('utf-8-sig'), filename=entry['name'])
         assert archive.read('VERSION').decode().strip() == version, 'Wrong embedded BLE version'
-        assert {'account-v2', 'selected-execution'} == set(manifest['requiredCapabilities']), 'Wrong BLE capability requirements'
+        assert {'account-v2', 'selected-execution', 'account-mode'} == set(manifest['requiredCapabilities']), 'Wrong BLE capability requirements'
     return manifest
 
 

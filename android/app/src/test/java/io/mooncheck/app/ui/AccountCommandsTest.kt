@@ -23,6 +23,18 @@ class AccountCommandsTest {
         assertTrue(AccountCommands.payload(Forms.accountCreate,complete,state)["create"]!!.jsonPrimitive.boolean)
         assertThrows(Exception::class.java) { AccountCommands.payload(Forms.accountCreate,complete,state.copy(accountRevision=23)) }
     }
+    @Test fun modernAccountUsesDefaultGroupAndExplicitlyStoresPersonalMode() {
+        val primary = a.copy(label = "@primary", primary = true, groupReport = true)
+        val modern = state.copy(capabilities = state.capabilities + "account-mode", accounts = listOf(primary))
+        val values = mapOf("_revision" to "22", "user" to "fixture-new", "pass" to "fixture",
+            "bfp" to "0123456789abcdef0123456789abcdef", "groupReport" to "true")
+        val created = AccountCommands.payload(Forms.accountCreate, values, modern)["fields"]!!.jsonObject
+        assertTrue(created["groupReport"]!!.jsonPrimitive.boolean)
+        assertFalse("label" in created)
+        val changed = AccountCommands.payload(Forms.accountEdit,
+            mapOf("_revision" to "22", "_target" to "@primary", "user" to a.user, "groupReport" to "false"), modern)
+        assertEquals(mapOf("groupReport" to JsonPrimitive(false)), changed["fields"]!!.jsonObject)
+    }
     @Test fun selectedExecutionRejectsDisabledOrEmptyAndUsesLabels() {
         val form=CommandForm("login","test.login","",emptyList())
         for(labels in listOf("","B","A,A"))assertThrows(Exception::class.java) { AccountCommands.payload(form,mapOf("_revision" to "22","_targets" to labels),state) }

@@ -17,7 +17,7 @@ python tools/ble_console.py --name WANAN-XXXX
 | 命令 | 说明 |
 | --- | --- |
 | `wifi <ssid> [密码]` | 连接 2.4 GHz WiFi；成功后自动校时 |
-| `auth <学号> <密码> [指纹]` | 配置主账号；指纹可选但强烈建议填 |
+| `auth <学号> <密码> [指纹]` | 旧版主账号兼容入口，新版账户请用 `account new` 或账户表单 |
 | `wx import <slot> <openid> <access> <refresh> <expiresAt>` | 导入本人微信授权凭据（`ble_console.py` 快捷命令） |
 | `loc <纬度> <经度> [地址…]` | 配置打卡坐标，地址只用于显示 |
 | `sched <打卡时间> [窗口结束] [抖动秒]` | 例：`sched 22:00 23:30 30` |
@@ -42,11 +42,12 @@ auto on
 
 | 命令 | 作用 |
 | --- | --- |
-| `group status` | 查看设备当前的打卡模式 |
-| `group on` / `group off` | 开启小组确认或切回个人定位 |
+| `account list` / `group status` | 查看每个账户的模式与完整学号 |
+| `account new <学号> <指纹> [personal]` | 新建账户，交互输入密码，默认小组模式 |
+| `group on <账号>` / `group off <账号>` | 为指定账户开启小组确认或切回个人定位 |
 | `login` / `probe` | 小组模式下检查安全员会话与待确认人数 |
 
-`group.mode` 的 `enabled` 取 JSON 布尔值。设置对所有启用账号生效，状态见 `cfg.schedule.groupReport`。旧固件缺少该字段时保留个人定位操作。只有有效的小组查询才返回 `groupPendingCount`。
+新固件将模式写入目标账户的 `groupReport` 布尔字段。同一设备可以同时保存小组和个人定位账户。旧固件的全局模式继续由 `cfg.schedule.groupReport` 表示。只有成功读取小组状态时才返回 `groupPendingCount`。
 
 ### 微信操作票据（个人定位模式）
 
@@ -195,7 +196,7 @@ wx test 0
 | `loc.set` | `lat`, `lng`, `addr` | 坐标 |
 | `sched.set` | `at`, `window_end`, `jitter_s` | 调度 |
 | `auto.set` | `enabled` | 自动打卡开关 |
-| `group.mode` | `enabled` | 安全员小组确认开关 |
+| `group.mode` | `enabled`、可选 `target` 与 `expectedRevision` | 兼容命令。多账户设备必须指定目标与修订号 |
 | `notify.set` | `url`, `style`, `on`, `gap`, `quota` | 默认通道 |
 | `notify.add` | `label`, `url`, `style?`, `on?`, `accounts?` | 附加通道（≤5 条，0.4.0 起；`accounts` 数组或逗号串，缺省=all） |
 | `notify.remove` | `label` | 删除附加通道 |

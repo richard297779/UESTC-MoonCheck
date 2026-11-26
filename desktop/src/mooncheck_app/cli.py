@@ -96,26 +96,25 @@ def cmd_config(rest):
         if ns.key == 'session_cookie' and new and new.startswith('SESSION='):
             cfg['session_cookie'] = new.split('=', 1)[1].strip()
         path = config.save(cfg)
-        shown_old = '******' if ns.key == 'password' else old
-        shown_new = '******' if ns.key == 'password' else (
-            new[:6] + '…' if ns.key == 'session_cookie' else new)
+        secret = ns.key in ('password', 'browser_fingerprint', 'session_cookie')
+        shown_old = '******' if secret else old
+        shown_new = '******' if secret else new
         print('%s: %s -> %s（已保存到 %s）' % (ns.key, shown_old, shown_new, path))
         return 0
 
 
 def _print_accounts(cfg):
-    accounts = cfg.get('accounts') or []
-    if not accounts:
-        print('# 账号表：空（单人模式，凭证取顶层 student_id/password）')
-        return
+    accounts = config.effective_accounts(cfg, only_enabled=False)
     print('# 账号表（%d 个）：' % len(accounts))
     for a in accounts:
         loc = a.get('location')
         loc_txt = ('%s,%s' % (loc.get('latitude'), loc.get('longitude'))) \
             if isinstance(loc, dict) else '沿用顶层'
-        print('  %-8s %-6s 学号=%s 指纹=%s 会话=%s 坐标=%s 最近=%s' % (
+        print('  %-8s %-6s 学号=%s 模式=%s 密码=%s 指纹=%s 会话=%s 坐标=%s 最近=%s' % (
             a.get('label'), '启用' if a.get('enabled', True) else '禁用',
-            str(a.get('student_id') or '')[:4] + '****',
+            str(a.get('student_id') or ''),
+            '小组确认' if config.group_report_enabled(cfg, a) else '个人定位',
+            '已设置' if a.get('password') else '未设置',
             '有' if a.get('browser_fingerprint') else '无',
             '有' if a.get('session_cookie') else '无',
             loc_txt, a.get('last_msg') or '-'))
@@ -143,11 +142,18 @@ def cmd_account(rest):
     sub.add_parser('list')
     p_add = sub.add_parser('add', help='新增/更新账号')
     p_add.add_argument('label')
+    p_new = sub.add_parser('new', help='自动分配标签，默认小组模式')
+    p_new.add_argument('student_id')
+    p_new.add_argument('fingerprint')
+    p_new.add_argument('--personal', action='store_true')
+    p_mode = sub.add_parser('mode', help='设置指定账户的打卡模式')
+    p_mode.add_argument('label')
+    p_mode.add_argument('mode', choices=['group', 'personal'])
     p_add.add_argument('student_id', nargs='?')
     p_add.add_argument('password', nargs='?')
     p_add.add_argument('fingerprint', nargs='?')
     p_add.add_argument('extra', nargs='*',
-                       help='key=value：lat= lng= addr= enabled=true|false')
+                       help='key=value：lat= lng= addr= enabled=true|false group_report=true|false')
     p_rm = sub.add_parser('rm', help='删除账号')
     p_rm.add_argument('label')
     for name in ('on', 'off'):
@@ -162,7 +168,26 @@ def cmd_account(rest):
         _print_accounts(cfg)
         return 0
 
-    if ns.action == 'add':
+    if ns.action == 'mode':
+        account = config.find_account(cfg, ns.label)
+        if account is None and ns.label == 'self' and not accounts:
+            account = cfg
+        if account is None:
+            print('找不到账号 %s' % ns.label)
+            return 2
+        if not config._HEX32.fullmatch(account.get('browser_fingerprint') or ''):
+            print('请先补齐该账户的浏览器指纹')
+            return 2
+        account['group_report'] = ns.mode == 'group'
+        config.save(cfg)
+        _print_accounts(cfg)
+        return 0
+
+    if ns.action in ('add', 'new'):
+        if ns.action == 'new':
+            ns.label = config.next_account_label(cfg)
+            ns.password = None
+            ns.extra = ['group_report=false'] if ns.personal else []
         if len(accounts) >= config.MAX_ACCOUNTS and not config.find_account(cfg, ns.label):
             print('最多 %d 个账号（与固件一致）。先 account rm 一个。' % config.MAX_ACCOUNTS)
             return 2
@@ -170,9 +195,13 @@ def cmd_account(rest):
         if not re.match(config._LABEL, ns.label):
             print('标签只允许 A-Za-z0-9-_，≤%d 字符' % 12)
             return 2
-        acct = config.find_account(cfg, ns.label) or dict(config.ACCOUNT_TEMPLATE)
+        existing = config.find_account(cfg, ns.label)
+        acct = dict(existing or config.ACCOUNT_TEMPLATE)
         acct['label'] = ns.label
         if ns.student_id:
+            if existing and ns.student_id != acct.get('student_id') and not (ns.password and ns.fingerprint):
+                print('更换学号需要填写新密码和浏览器指纹')
+                return 2
             config.reset_identity(acct,ns.student_id)
             acct['student_id'] = ns.student_id
         if ns.password:
@@ -184,6 +213,9 @@ def cmd_account(rest):
             return 2
         if ns.fingerprint:
             acct['browser_fingerprint'] = ns.fingerprint
+        if not config.account_credentials_set(acct) or not config._HEX32.fullmatch(acct.get('browser_fingerprint') or ''):
+            print('须填写学号、密码和 32 位十六进制浏览器指纹')
+            return 2
         for kv in ns.extra or []:
             if '=' not in kv:
                 print('忽略无法解析的参数：%s（应为 key=value）' % kv)
@@ -203,11 +235,22 @@ def cmd_account(rest):
                 acct['location']['reverse_geocode'] = value
             elif key == 'enabled':
                 acct['enabled'] = value.lower() in ('1', 'true', 'yes', 'on', '开')
+            elif key == 'group_report':
+                try:
+                    acct['group_report'] = config._coerce(value, True)
+                except ValueError:
+                    print('group_report 须为 true 或 false')
+                    return 2
             else:
                 print('忽略未知参数：%s' % key)
-        existing = config.find_account(cfg, ns.label)
         if existing is None:
+            if not accounts and config.account_credentials_set(cfg) and ns.label == 'self':
+                print('主账号标签 self 已存在，请使用其他标签')
+                return 2
+            config.promote_primary(cfg)
             accounts.append(acct)
+        else:
+            existing.update(acct)
         path = config.save(cfg)
         print('账号 %s 已保存（%s）' % (ns.label, path))
         _print_accounts(cfg)

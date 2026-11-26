@@ -18,7 +18,8 @@ class GuiTests(unittest.TestCase):
         self.folder=tempfile.TemporaryDirectory()
         self.path=Path(self.folder.name)/'config.json'
         self.env=patch.dict(os.environ,MOONCHECK_CONFIG=str(self.path));self.env.start()
-        cfg=config.default_config();cfg.update(student_id='fixture-student',password='fixture-password')
+        cfg=config.default_config();cfg.update(student_id='fixture-student', password='fixture-password',
+                                               browser_fingerprint='0123456789abcdef0123456789abcdef')
         config.save(cfg)
         try:
             self.root=gui.tk.Tk();self.root.withdraw()
@@ -35,11 +36,17 @@ class GuiTests(unittest.TestCase):
         entries=[w for w in self.app.tab_wechat.winfo_children() if isinstance(w,gui.ttk.Entry) and not isinstance(w,gui.ttk.Combobox)]
         self.assertEqual(['*','*','*',''],[entry.cget('show') for entry in entries])
 
-    def test_group_mode_persists_from_schedule_tab(self):
-        self.assertFalse(self.app.group_report.get())
-        self.app.group_report.set(True)
+    def test_account_mode_persists_without_reentering_credentials(self):
+        self.assertTrue(self.app.acct_group.get())
+        self.assertEqual('', self.app.acct_vars['password'].get())
+        self.assertEqual('', self.app.acct_vars['browser_fingerprint'].get())
+        self.app.acct_group.set(False)
+        self.app._on_acct_apply()
         self.app._on_save()
-        self.assertTrue(config.group_report_enabled(config.load()))
+        saved = config.load()
+        self.assertFalse(config.group_report_enabled(saved))
+        self.assertEqual('fixture-password', saved['password'])
+        self.assertEqual('0123456789abcdef0123456789abcdef', saved['browser_fingerprint'])
 
     def test_import_persists_only_selected_account_and_clears_inputs(self):
         for key,value in dict(openid='fixture-openid',access='fixture-access',refresh='fixture-refresh',expires_at='0').items():self.app.wx_vars[key].set(value)

@@ -53,7 +53,7 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
     }
   } else {
     result.total = 1;
-    queue.push_back(m_config->deviceProfile());
+    queue.push_back(m_config->storedProfile());
     LOG_I(kTag, "account table empty -> using device profile \"%s\"", queue[0].label.c_str());
   }
 
@@ -78,6 +78,7 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
     if (profile.enabled) continue;
     JsonObject item = array.add<JsonObject>();
     item["label"] = profile.label;
+    item["groupReport"] = profile.groupReport;
     item["enabled"] = false;
     item["result"] = "disabled";
     item["ok"] = false;
@@ -99,12 +100,13 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
     // 表为空时没有 per-account 记录，退回设备级 last 结果（同一天同源）。
     const bool alreadyDone =
         !force && !probeOnly &&
-        (fromStore ? m_accounts->isCheckedInToday(profile.label, today, m_config->groupReportEnabled())
+        (fromStore ? m_accounts->isCheckedInToday(profile.label, today, profile.groupReport)
                    : m_config->isLastResultOkFor(today));
     if (alreadyDone) {
       result.okCount++;
       JsonObject item = array.add<JsonObject>();
       item["label"] = profile.label;
+      item["groupReport"] = profile.groupReport;
       item["enabled"] = true;
       item["result"] = "already_done";
       item["ok"] = true;
@@ -166,6 +168,7 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
 
     JsonObject item = array.add<JsonObject>();
     item["label"] = profile.label;
+    item["groupReport"] = profile.groupReport;
     item["enabled"] = true;
     item["result"] = CheckinService::outcomeName(outcome);
     item["ok"] = ok;
@@ -191,8 +194,13 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
 
   // 收尾：恢复设备级配置；再把**第一个生效账号**套进内存，
   // 这样 status / probe 显示的就是"列表第一个用户"，而不是残留的最后一个账号。
+  const String lastAccount = m_config->activeAccount();
   m_config->reload();
   if (!active.empty()) m_config->applyProfile(active[0]);
+  if (m_config->activeAccount() != lastAccount) {
+    if (m_cookies) m_cookies->clear();
+    m_checkin->resetLoginState();
+  }
 
   LOG_I(kTag, "run done: %u/%u ok (%u disabled)", static_cast<unsigned>(result.okCount),
         static_cast<unsigned>(result.enabledTotal), static_cast<unsigned>(result.disabledCount));

@@ -156,7 +156,7 @@ void setup() {
   g_checkin.begin(g_config, g_auth, g_api, g_time);
 
   // 5b) 账号表（打卡的唯一事实来源：单人 = 只有一条，表为空 = 用设备自身配置）
-  g_accounts.begin();
+  g_accounts.begin(g_config.legacyGroupReport());
   g_multi.begin(g_config, g_accounts, g_cookies, g_checkin, g_time);
   g_notify.begin(g_config, g_http, g_time);
   // 启动就把「列表第一个生效账号」套进内存配置：这样 status / probe / chain
@@ -175,7 +175,7 @@ void setup() {
   }
 
   // 6) 调度器
-  g_scheduler.begin(g_config, g_time);
+  g_scheduler.begin(g_config, g_time, g_accounts);
   g_scheduler.setTriggerSink(onScheduledTrigger);
 
   // 7) 指令路由

@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.*
 
-data class Account(val label: String, val user: String, val enabled: Boolean, val slot: Int, val authorized: Boolean, val passwordSet: Boolean? = null, val fingerprintSet: Boolean? = null, val address: String = "", val latitude: Double? = null, val longitude: Double? = null, val lastResult: String = "", val primary: Boolean = false)
+data class Account(val label: String, val user: String, val enabled: Boolean, val slot: Int, val authorized: Boolean, val passwordSet: Boolean? = null, val fingerprintSet: Boolean? = null, val address: String = "", val latitude: Double? = null, val longitude: Double? = null, val lastResult: String = "", val primary: Boolean = false, val groupReport: Boolean? = null)
 data class NotifyChannel(val label: String, val enabled: Boolean, val accounts: String)
 data class DeviceSnapshot(
     val capabilities: Set<String> = emptySet(), val accountRevision: Long? = null,
@@ -256,7 +256,8 @@ class DeviceRepository(val transport: DeviceTransport, private val scope: Corout
             Account(account.text("label"), account.text("user"), account.flag("enabled"), index, index in slots,
                 (account["passwordSet"] as? JsonPrimitive)?.booleanOrNull,(account["fingerprintSet"] as? JsonPrimitive)?.booleanOrNull,
                 account.text("addr",""),(account["lat"] as? JsonPrimitive)?.doubleOrNull,(account["lng"] as? JsonPrimitive)?.doubleOrNull,
-                account.text("lastDate","")+" "+account.text("lastMsg",""),account.flag("primary"))
+                account.text("lastDate","")+" "+account.text("lastMsg",""), account.flag("primary"),
+                (account["groupReport"] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull)
         }) }
     }
     private fun applyStatus(data: JsonObject) {

@@ -36,7 +36,7 @@ String maskUser(const String& studentId) {
 
 }  // namespace
 
-Result AccountStore::begin(const char* nvsNamespace) {
+Result AccountStore::begin(bool legacyGroupReport, const char* nvsNamespace) {
   if (m_mutex == nullptr) {
     m_mutex = xSemaphoreCreateMutex();
   }
@@ -61,6 +61,7 @@ Result AccountStore::begin(const char* nvsNamespace) {
       profile.label = item["l"] | "";
       // 缺 "en" 视为启用：兼容旧版本（无此字段）写下的账号表
       profile.enabled = item["en"] | true;
+      profile.groupReport = item["groupMode"] | legacyGroupReport;
       profile.studentId = item["u"] | "";
       profile.password = item["p"] | "";
       profile.fingerprint = item["f"] | "";
@@ -97,6 +98,7 @@ Result AccountStore::persist() {
     item["d"] = profile.lastDate;
     item["ok"] = profile.lastOk;
     item["group"] = profile.lastGroupReport;
+    item["groupMode"] = profile.groupReport;
     item["m"] = profile.lastMsg;
   }
   String serialized;
@@ -123,9 +125,20 @@ int AccountStore::indexOfLabel(const String& label) const {
   return -1;
 }
 
-Result AccountStore::addOrUpdate(const CheckinProfile& profile) {
+String AccountStore::nextLabel(const String& reserved) const {
+  for (unsigned number = 1; number <= kMaxProfiles + 1; ++number) {
+    const String candidate = String("A0") + String(number);
+    if (candidate != reserved && indexOfLabel(candidate) < 0) return candidate;
+  }
+  return String();
+}
+
+Result AccountStore::addOrUpdate(const CheckinProfile& profile, const CheckinProfile* preservedPrimary) {
   if (!labelOk(profile.label)) {
     LOG_W(kTag, "invalid label (A-Z a-z 0-9 - _, 1..12 chars)");
+    return Result::InvalidParam;
+  }
+  if (preservedPrimary && (!labelOk(preservedPrimary->label) || preservedPrimary->label == profile.label)) {
     return Result::InvalidParam;
   }
   if (profile.studentId.length() == 0 || profile.password.length() == 0) {
@@ -151,9 +164,10 @@ Result AccountStore::addOrUpdate(const CheckinProfile& profile) {
     target.lastGroupReport = lastGroupReport;
     target.lastMsg = lastMsg;
   } else {
-    if (m_list.size() >= kMaxProfiles) {
+    if (m_list.size() >= kMaxProfiles || (preservedPrimary && !m_list.empty())) {
       result = Result::InvalidParam;
     } else {
+      if (preservedPrimary) m_list.push_back(*preservedPrimary);
       m_list.push_back(profile);
     }
   }
@@ -193,6 +207,36 @@ size_t AccountStore::enabledCount() const {
   return n;
 }
 
+std::optional<bool> AccountStore::allEnabledDoneToday(const String& date) {
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  std::optional<bool> done;
+  if (!m_list.empty()) {
+    done = true;
+    for (const auto& profile : m_list) {
+      if (profile.enabled && (!profile.lastOk || profile.lastDate != date ||
+                              profile.lastGroupReport != profile.groupReport)) {
+        done = false;
+        break;
+      }
+    }
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  return done;
+}
+
+int AccountStore::firstEnabledPersonalSlot() {
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  int slot = -1;
+  for (size_t index = 0; index < m_list.size(); ++index) {
+    if (m_list[index].enabled && !m_list[index].groupReport) {
+      slot = static_cast<int>(index);
+      break;
+    }
+  }
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  return slot;
+}
+
 Result AccountStore::remove(const String& label) {
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   const int index = indexOfLabel(label);
@@ -226,11 +270,13 @@ Result AccountStore::setResult(const String& label, const String& date, bool suc
   const int index = indexOfLabel(label);
   if (index >= 0) {
     CheckinProfile& profile = m_list[static_cast<size_t>(index)];
+    const CheckinProfile previous = profile;
     profile.lastDate = date;
     profile.lastOk = success;
     profile.lastGroupReport = groupReport;
     profile.lastMsg = message;
     result = persist();
+    if (result != Result::Ok) profile = previous;
   }
   if (m_mutex) xSemaphoreGive(m_mutex);
   LOG_I(kTag, "account %s result: date=%s ok=%d", label.c_str(), date.c_str(), success ? 1 : 0);
@@ -255,6 +301,7 @@ String AccountStore::toJsonSummary() const {
     item["label"] = profile.label;
     item["enabled"] = profile.enabled;
     item["user"] = maskUser(profile.studentId);
+    item["groupReport"] = profile.groupReport;
     item["passwordSet"] = profile.password.length() > 0;
     item["fingerprintSet"] = profile.hasFingerprint();
     item["location"] = profile.hasLocation();
@@ -295,12 +342,14 @@ Result AccountStore::replaceAt(size_t index, const CheckinProfile& profile) {
 String AccountStore::toJsonDetails() const {
   JsonDocument doc;
   doc["revision"] = m_revision;
+  doc["accountMode"] = true;
   JsonArray rows = doc["accounts"].to<JsonArray>();
   for (size_t i=0;i<m_list.size();++i) {
     const auto& p=m_list[i];
     JsonObject row=rows.add<JsonObject>();
     row["slot"]=i; row["label"]=p.label; row["user"]=p.studentId;
     row["enabled"]=p.enabled; row["passwordSet"]=p.password.length()>0;
+    row["groupReport"]=p.groupReport;
     row["fingerprintSet"]=p.hasFingerprint(); row["lat"]=p.latitude; row["lng"]=p.longitude; row["addr"]=p.address;
     row["lastDate"]=p.lastDate; row["lastOk"]=p.lastOk; row["lastMsg"]=p.lastMsg;
   }

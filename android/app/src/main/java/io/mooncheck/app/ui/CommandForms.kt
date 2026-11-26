@@ -2,7 +2,7 @@ package io.mooncheck.app.ui
 
 import kotlinx.serialization.json.*
 
-enum class Kind { Text, Secret, Int, Decimal, Choice }
+enum class Kind { Text, Secret, Int, Decimal, Choice, Toggle }
 data class Input(val key: String, val title: String, val hint: String = "", val initial: String = "",
     val kind: Kind = Kind.Text, val required: Boolean = true, val choices: List<String> = emptyList())
 data class CommandForm(val title: String, val op: String, val description: String, val inputs: List<Input>,
@@ -31,8 +31,18 @@ object Forms {
         Input("lat", "账号纬度", "与经度成对填写；都留空沿用设备坐标", kind = Kind.Decimal, required = false),
         Input("lng", "账号经度", "请填写本人现场确认的坐标", kind = Kind.Decimal, required = false),
         Input("addr", "账号地址", "可单独填写；留空不代表保留旧账号地址", required = false)), confirm = true)
-    val accountCreate = account.copy(title="新建账号",description="新建须填写标签、学号、密码、32 位浏览器指纹；位置可选。需要支持 account-v2 的固件。",inputs=account.inputs.map { if(it.key=="bfp") it.copy(required=true,hint="32 位十六进制") else if(it.key=="addr") it.copy(hint="留空采用设备默认地址") else it })
-    val accountEdit = account.copy(title="修改已有账号",op="account.patch",description="按标签、序号或完整学号匹配唯一账号；仅修改非空项，留空保留。修改学号需重新授权。",inputs=listOf(Input("_target","目标标签 / 序号 / 学号"))+account.inputs.map { it.copy(required=false,hint="留空保留设备原值") })
+    private val groupMode = Input("groupReport", "小组模式", "取消勾选后使用个人定位打卡", "true", Kind.Toggle, required = false)
+    private val accountFields = account.inputs.filterNot { it.key == "label" }.toMutableList().apply {
+        this[2] = this[2].copy(required = true, hint = "32 位十六进制")
+        add(3, groupMode)
+    }
+    val accountCreate = account.copy(title = "新建账号", description = "填写学号、密码和浏览器指纹。新账号默认使用小组确认。", inputs = accountFields)
+    val accountEdit = account.copy(title = "编辑账号", op = "account.patch",
+        description = "密码和指纹留空保留已有值。更换学号时，填写该账号的新密码和指纹。",
+        inputs = listOf(Input("_target", "目标标签 / 序号 / 学号")) + accountFields.map {
+            if (it.key in setOf("pass", "bfp")) it.copy(required = false, hint = "留空保留已有值")
+            else it.copy(required = false)
+        })
     val name = CommandForm("修改设备名称", "name.set", "显示为 WANAN-标签。修改后重新扫描，设备 MAC 不变。", listOf(Input("name", "名称标签", "1–12 位字母、数字、- 或 _")))
     val notify = CommandForm("配置默认通知", "notify.set", "通知地址可能包含密钥，仅发送给所选设备。Bark 使用 0，ntfy 使用 1，Server酱使用 2。", listOf(
         Input("url", "推送 URL", "https://…", kind = Kind.Secret), Input("style", "发送格式", initial = "2", kind = Kind.Choice, choices = listOf("0", "1", "2")),
@@ -48,10 +58,13 @@ object Forms {
         val fields = buildJsonObject {
             for (input in form.inputs) {
                 val value = values[input.key].orEmpty()
+                if (values["groupReport"] == "true" && input.key in setOf("lat", "lng", "addr") &&
+                    form.op in setOf("account.add", "account.patch")) continue
                 require(!input.required || value.isNotBlank()) { "请填写${input.title}" }
                 if (!input.required && value.isEmpty() && (input.key != "pass" || form.op=="account.patch")) continue
                 if (form.op in setOf("account.add","account.patch") && input.key in setOf("lat", "lng") && value.isBlank()) continue
                 when (input.kind) {
+                    Kind.Toggle -> put(input.key, value.toBooleanStrictOrNull() ?: error("${input.title}无效"))
                     Kind.Int -> put(input.key, value.toLongOrNull() ?: error("${input.title}需要整数"))
                     Kind.Decimal -> put(input.key, value.toDoubleOrNull()?.takeIf { it.isFinite() } ?: error("${input.title}需要有效数字"))
                     Kind.Choice -> {

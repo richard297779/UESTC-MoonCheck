@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
+#include <optional>
 #include <vector>
 
 #include "app_types.h"
@@ -20,10 +21,11 @@
 /// @brief 单个打卡账号。
 struct CheckinProfile {
   String label;             ///< 短标签（A-Z a-z 0-9 - _，≤12 字符），如 "A01"
+  bool groupReport = true;  ///< 新账号默认使用小组确认。
   bool enabled = true;      ///< 本账号是否参与打卡（false=每天跳过，不计入总数与成功判定）
   String studentId;
   String password;
-  String fingerprint;       ///< 可空（该账号未做免验证登记时会要验证码）
+  String fingerprint;       ///< 新增或修改账号时必需，旧记录可能为空。
   double latitude = 0.0;
   double longitude = 0.0;
   String address;
@@ -42,7 +44,7 @@ class AccountStore {
   static constexpr size_t kMaxProfiles = 6;
 
   /// @brief 打开 NVS 命名空间并加载账号表。
-  Result begin(const char* nvsNamespace = "accounts");
+  Result begin(bool legacyGroupReport, const char* nvsNamespace = "accounts");
 
   size_t count() const;
   bool get(size_t index, CheckinProfile& out) const;
@@ -50,7 +52,8 @@ class AccountStore {
   bool hasAny() const { return count() > 0; }
 
   /// @brief 新增或按 label 覆盖一个账号（超出上限返回 InvalidParam）。
-  Result addOrUpdate(const CheckinProfile& profile);
+  Result addOrUpdate(const CheckinProfile& profile, const CheckinProfile* preservedPrimary = nullptr);
+  String nextLabel(const String& reserved = "") const;
   Result replaceAt(size_t index, const CheckinProfile& profile);
   uint32_t revision() const { return m_revision; }
   void invalidateRevision() { ++m_revision; }
@@ -59,6 +62,8 @@ class AccountStore {
   Result setEnabled(const String& label, bool enabled);
   /// @brief 启用中的账号数（禁用的不参与打卡，也不计入成功判定分母）。
   size_t enabledCount() const;
+  std::optional<bool> allEnabledDoneToday(const String& date);
+  int firstEnabledPersonalSlot();
   /// @brief 按 label 删除。
   Result remove(const String& label);
   /// @brief 清空全部账号。

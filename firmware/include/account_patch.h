@@ -16,10 +16,19 @@ bool mergeAccountPatch(Profile& profile, JsonObjectConst fields, bool creating, 
   for (JsonPairConst item : fields) {
     const char* key = item.key().c_str();
     if (std::strcmp(key,"lat") == 0 || std::strcmp(key,"lng") == 0) continue;
+    if (std::strcmp(key,"groupReport") == 0) {
+      if (!item.value().is<bool>()) return fail("groupReport must be boolean");
+      continue;
+    }
     if (std::strcmp(key,"label") && std::strcmp(key,"user") && std::strcmp(key,"pass") &&
         std::strcmp(key,"bfp") && std::strcmp(key,"addr")) return fail("unknown account field");
     if (!item.value().is<const char*>()) return fail("account text fields must be strings");
   }
+  const bool identityChanged = supplied("user") && profile.studentId != fields["user"].as<const char*>();
+  if (!creating && identityChanged && (!supplied("pass") || !supplied("bfp"))) {
+    return fail("changing user requires their password and browser fingerprint");
+  }
+  if (supplied("groupReport")) profile.groupReport = fields["groupReport"].as<bool>();
   if (supplied("label")) profile.label = fields["label"].as<const char*>();
   if (supplied("user")) profile.studentId = fields["user"].as<const char*>();
   if (supplied("pass")) profile.password = fields["pass"].as<const char*>();
@@ -28,8 +37,7 @@ bool mergeAccountPatch(Profile& profile, JsonObjectConst fields, bool creating, 
   if (profile.label.length() == 0 || profile.label.length() > 12) return fail("invalid account label");
   for (size_t i=0;i<profile.label.length();++i) { char c=profile.label[i]; if (!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_')) return fail("invalid account label"); }
   if (!profile.studentId.length() || !profile.password.length()) return fail("user and password required");
-  if (creating && !profile.fingerprint.length()) return fail("new account requires browser fingerprint");
-  if (supplied("bfp") || creating) {
+  {
     if (profile.fingerprint.length() != 32) return fail("fingerprint must be 32 hex characters");
     for (size_t i=0;i<profile.fingerprint.length();++i) { char c=profile.fingerprint[i]; if (!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return fail("fingerprint must be 32 hex characters"); }
   }

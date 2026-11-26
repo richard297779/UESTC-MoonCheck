@@ -43,6 +43,7 @@ void CheckinService::resetLoginState() {
   // 多人模式切换账号时必须清零：否则第二个账号会被 30 分钟登录冷却挡住。
   m_lastLoginDone = false;
   m_lastLoginMs = 0;
+  m_scheduleKnown = false;
 }
 
 Result CheckinService::probeGroup(unsigned& pendingCount) {
@@ -326,12 +327,13 @@ CheckinOutcome CheckinService::perform(bool force, String& outMessage) {
   // enterApp 会清空旧票据，故在提交前安装：无票据且配置了供给回调时现场取票
   // （凭据刷新 → login_buffer → MMTLS 取码 → check-bind → 换票，约 10 s）。
   const String currentUser = m_config->auth().studentId;
-  if (!m_api->hasFreshTicketFor(currentUser) && m_wxTicket) {
+  const String account = m_config->activeAccount();
+  if (!m_api->hasFreshTicketFor(account, currentUser) && m_wxTicket) {
     String ticket;
     String wxError;
     const Result wxResult = m_wxTicket(ticket, wxError);
     if (wxResult == Result::Ok && ticket.length() == 43) {
-      m_api->setOperationTicket(ticket, currentUser);
+      m_api->setOperationTicket(ticket, account, currentUser);
       LOG_I(kTag, "wx operation ticket installed (43 chars)");
     } else {
       outMessage = String("wx ticket failed: ") + wxError;

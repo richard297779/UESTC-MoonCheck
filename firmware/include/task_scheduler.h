@@ -12,6 +12,7 @@
 
 #include <functional>
 
+#include "account_store.h"
 #include "app_config.h"
 #include "app_types.h"
 #include "time_service.h"
@@ -30,7 +31,7 @@ class TaskScheduler {
   using TriggerSink = std::function<void(Trigger trigger)>;
 
   /// @brief 注入依赖。
-  Result begin(AppConfig& config, TimeService& time);
+  Result begin(AppConfig& config, TimeService& time, AccountStore& accounts);
 
   void setTriggerSink(TriggerSink sink) { m_sink = sink; }
   void setAutoDailyEnabled(bool enabled);
@@ -43,6 +44,8 @@ class TaskScheduler {
   String nextRunString() const;
 
  private:
+  bool tasksComplete(const String& date) const;
+  AccountStore* m_accounts = nullptr;
   AppConfig* m_config = nullptr;
   TimeService* m_time = nullptr;
   TriggerSink m_sink;

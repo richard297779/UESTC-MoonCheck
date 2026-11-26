@@ -107,6 +107,7 @@ class CommandRouter {
   void handleAccountAdd(JsonObjectConst request, int32_t id);
   void handleAccountSnapshot(int32_t id);
   void handleAccountPatch(JsonObjectConst request, int32_t id);
+  void refreshAccountContext();
   void handleSelected(JsonObjectConst request, int32_t id);
   bool clearAccountAuthorizations(int32_t id);
   bool m_captureReply = false;

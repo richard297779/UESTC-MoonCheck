@@ -1,14 +1,14 @@
 # v0.8.0：账号快照、合并与目标执行（2026-10-29）
 
-协议仍为 1。0.8.0 在 `hello.caps` 增加 `account-v2` 与 `selected-execution`；GitHub 已发行 v0.7.0 不具有这些能力。v0.9.0 增加 `group-report` 能力。电脑和 Android 从 `cfg.schedule.groupReport` 读取模式，该字段同时支持早期未声明能力位的 v0.9.0 本地验证构建。客户端根据回执字段识别功能，不根据版本字符串推断。
+协议仍为 1。0.8.0 在 `hello.caps` 增加 `account-v2` 与 `selected-execution`；GitHub 已发行 v0.7.0 不具有这些能力。v0.9.0 声明 `group-report` 和 `account-mode`。新版客户端按账号快照读取模式；`cfg.schedule.groupReport` 表示当前运行上下文，并保留早期固件设备级模式的兼容回读。
 
-- `account.snapshot` → `data.revision`（本次启动随机起点、配置变化递增的 uint32）及 `accounts`。记录含 slot、label、完整 user、enabled、passwordSet、fingerprintSet、lat/lng/addr、lastDate/lastOk/lastMsg；不返回密码、指纹、微信令牌。表为空时附 `primary`，label 为 `@primary`、slot=0。
-- `account.patch` 请求：`create`、`target`（更新前标签）、`expectedRevision`、`fields`。fields 只允许 label/user/pass/bfp/lat/lng/addr；空字符串保留。新建必须有标签、学号、密码和 32 位十六进制指纹；更新从原记录合并，成对修改坐标，地址可独立修改。单条账号表保存失败恢复内存旧值。
+- `account.snapshot` → `data.revision`（本次启动随机起点、配置变化递增的 uint32）及 `accounts`。新版快照声明 `data.accountMode=true`，每个账户记录含 slot、label、完整 user、enabled、groupReport、passwordSet、fingerprintSet、lat/lng/addr、lastDate/lastOk/lastMsg；不返回密码、指纹、微信令牌。表为空时附 `primary`，label 为 `@primary`、slot=0。
+- `account.patch` 请求：`create`、`target`（更新前标签）、`expectedRevision`、`fields`。fields 允许 label/user/pass/bfp/lat/lng/addr/groupReport。空字符串保留，`groupReport` 接受 JSON 布尔值。新建必须填写学号、密码和 32 位十六进制指纹，省略 label 时设备分配标签，省略模式时默认为 true。已有主账号可用 `@primary` 编辑。新建首个附加账户时保留已配置主账号及槽位 0。升级时旧账户继承旧设备模式。单条账号表保存失败恢复内存旧值。
 - `account.enable/remove/clear` 可带 expectedRevision；新版 GUI / APK 必带。所有带该字段的请求先检查一致性，过期拒绝。
 - `wx.import/test` 新版请求携 slot、target、expectedRevision，验证同一快照的目标与槽位。标签改名保持槽位，通知关联尽力同步，失败返回 `notificationLinksUpdated=false` 和警告。修改学号先删除该槽位授权及清理旧会话；删除 / 清空账号先删除全部微信授权，避免槽位压缩错配。NVS 多键不具备事务：清理失败时保持账号表不变，但已清理槽位需重新授权；不能宣称跨存储原子性。
 - `test.login/chain/checkin/multi` 可带 `targets:[标签…]` 与 expectedRevision。全体目标先复制、校验（1–6 个、不重复、存在、启用）再执行；空账号表用 `@primary`。每人会话 / 票据清空，应用其账号及独立位置，缺位置用保存的默认值；串行执行后恢复原上下文，再清会话。不会持久更改启用开关。
 - 选择执行返回一次同 ID `ok`，data.accounts 为逐账号结果，含 label/operation/ok/status/msg/data；外层 ok 表示整条请求处理完成，不能代替逐人业务成功。status 为 passed/failed/skipped；无 ID progress 标记当前账号阶段。客户端超时不自动重放。
-- `account.list` 与无 targets 的旧命令仍兼容；旧 account.add 保留整条覆盖语义。新客户端不能用旧覆盖方式模拟安全合并。Wi-Fi 扫描逐条序列化转义 SSID，不按网络名去重。定时预取票据与手动执行共用按当前标签 / 学号校验的槽位映射，首个启用账号不是槽位 0 时也不会错配。
+- `account.list` 与无 targets 的旧命令仍兼容；旧 account.add 保留整条覆盖语义。新客户端不能用旧覆盖方式模拟安全合并。Wi-Fi 扫描逐条序列化转义 SSID，不按网络名去重。定时票据预取选择首个启用的个人定位账号，票据同时绑定标签和学号。计划和执行结果分别按当前账号模式核对。
 
 账号快照完整学号只用于用户明确要求的本人账号界面；诊断、日志仍脱敏，断线清理。当前 BLE 没有新增配对 / 鉴权能力，保留原有近距离控制边界。
 
@@ -163,7 +163,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `loc.set` | `lat,lng[,addr]` | 写打卡坐标 | 否 |
 | `sched.set` | `at,window_end[,jitter_s,window_start]` | 写打卡时间与窗口（默认 22:00 / 21:00–23:30） | 否 |
 | `auto.set` | `enabled` | 开关每日自动打卡 | 否 |
-| `group.mode` | `enabled` 布尔值 | 设备级小组确认开关，持久化到 NVS。默认关闭，状态见 `cfg.schedule.groupReport`。适用于所有启用账号，成功回执 `data.enabled` 为保存的布尔值 | 否 |
+| `group.mode` | `enabled` 布尔值，`target` 与 `expectedRevision` | 兼容命令，修改单个账号模式。多账户时必须指定目标和修订号。新客户端用 `account.patch` | 否 |
 | `notify.set` | `url,style,on,gap,quota` | 配置手机通知通道（`style` 0=GET 模板 1=POST 文本 2=POST JSON）；`url` 含 token，回执只输出脱敏形式。详见 `docs/notify-design.md` | 否 |
 | `notify.status` | — | 通知开关 / 格式 / 脱敏 URL / 今日已发 / 队列长度 / 重试轮次 | 否 |
 | `test.notify` | `body?` | **立即真发一条**（不入队、不受去重与配额限制），用来验证通道 | 是 |

@@ -6,7 +6,7 @@ Windows / Linux 原生桌面程序，CLI 与 tkinter 图形界面共用业务逻
 
 ## 新版小组确认
 
-使用当前桌面源码运行程序，在“打卡时间”页勾选“安全员小组确认”并保存。命令行可以执行 `MoonCheck config set schedule.group_report true`。从源码运行时，将 `MoonCheck` 替换为 `python desktop/mooncheck.py`。
+在「账户配置」填写学号、密码和 32 位浏览器指纹。新增账户默认勾选「小组模式」。个人定位账户取消勾选并设置位置与微信授权。点击「应用」后保存配置。命令行可用 `MoonCheck account new <学号> <指纹>` 建号，`MoonCheck account mode <标签> group|personal` 设置模式。旧配置升级后，各账户继承原有模式。从源码运行时，将 `MoonCheck` 替换为 `python desktop/mooncheck.py`。
 
 仅需配置校园网访问和本人 CAS 登录信息。开关适用于所有启用的账号，每个账号均须有安全员小组上报权限。用 `status` 读取待确认人数，`checkin --dry-run` 可以离线查看请求类型。原有 `auto` 任务在配置的窗口内执行批量确认。
 

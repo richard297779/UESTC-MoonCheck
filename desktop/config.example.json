@@ -17,8 +17,7 @@
   },
   "schedule": {
     "checkin_at": "22:00",
-    "window_end": "23:30",
-    "group_report": false
+    "window_end": "23:30"
   },
   "accounts": [],
   "notify": {
@@ -39,7 +38,8 @@
       }
     ]
   },
-  "config_schema": 2,
+  "config_schema": 3,
+  "group_report": true,
   "wechat": {
     "openid": "",
     "access": "",

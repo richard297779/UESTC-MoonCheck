@@ -24,15 +24,33 @@ object AccountCommands {
         return when(form.op) {
             "account.add","account.patch" -> {
                 val creating=form.op=="account.add"
-                val changes=fields()
+                val modeSupported = "account-mode" in state.capabilities
+                val target = if (creating) null else resolve(state.accounts, values["_target"].orEmpty())
+                require(target?.primary != true || modeSupported) { "旧版主账号请使用基础账号设置" }
+                val changes = fields().toMutableMap()
+                if (!modeSupported || (!creating && changes["groupReport"]?.jsonPrimitive?.booleanOrNull == target?.groupReport)) {
+                    changes.remove("groupReport")
+                }
+                if (!creating && changes["user"]?.jsonPrimitive?.content == target?.user) changes.remove("user")
+                if (creating && !modeSupported && "label" !in changes) {
+                    val labels = state.accounts.map { it.label }.toSet()
+                    changes["label"] = JsonPrimitive((1..7).map { "A0$it" }.first { it !in labels })
+                }
+                if (creating || "user" in changes) {
+                    require(listOf("user", "pass", "bfp").all { changes[it]?.jsonPrimitive?.content?.isNotBlank() == true }) {
+                        "新建或更换学号须填写学号、密码和浏览器指纹"
+                    }
+                }
+                if (modeSupported && target?.fingerprintSet == false) require("bfp" in changes) { "请补齐浏览器指纹" }
                 require(changes.isNotEmpty()) { "没有修改，不会发送空更新" }
-                if(creating)require(listOf("label","user","pass","bfp").all { changes[it]?.jsonPrimitive?.content?.isNotBlank()==true }) { "新账号须填写标签、学号、密码和浏览器指纹" }
-                val target=if(creating)null else resolve(state.accounts,values["_target"].orEmpty())
-                require(target?.primary!=true) { "主账号请使用基础账号设置" }
-                buildJsonObject { put("create",creating);put("target",target?.label.orEmpty());put("fields",changes);put("expectedRevision",revision) }
+                buildJsonObject {
+                    put("create", creating); put("target", target?.label.orEmpty())
+                    put("fields", JsonObject(changes)); put("expectedRevision", revision)
+                }
             }
             "wx.import","wx.test" -> {
                 val target=resolve(state.accounts,values["_target"].orEmpty())
+                require(target.groupReport != true) { "请选择个人定位账号" }
                 buildJsonObject { fields().forEach { (k,v)->put(k,v) };put("slot",target.slot);put("target",target.label);put("expectedRevision",revision) }
             }
             else -> {

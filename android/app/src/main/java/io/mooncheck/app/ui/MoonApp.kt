@@ -46,6 +46,9 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
         if (!state.ready) { form = null; confirm = null; developer = false }
     }
     val enabled = state.ready && !state.busy
+    val accountModes = "account-mode" in state.capabilities
+    val personalEnabled = if (accountModes) state.accounts.any { it.enabled && it.groupReport == false } else state.groupReport != true
+    val groupEnabled = if (accountModes) state.accounts.any { it.enabled && it.groupReport == true } else state.groupReport == true
     fun execute(title: String, op: String, fields: JsonObject = JsonObject(emptyMap()), timeout: Long = 15000) {
         if(op in AccountCommands.executionOps) form=CommandForm(title,op,"请选择本次目标账号；每个账号使用自己的会话和位置。",emptyList(),confirm=true,extra=fields)
         else vm.repository.execute(title, op, fields, timeout)
@@ -98,7 +101,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                         Section("基础检查") {
                             ActionRow("查看设备时间", "检查校时与当前窗口", Icons.Rounded.Schedule, enabled) { execute("时间检查", "test.time") }
                             ActionRow("网络连通检查", "由设备访问 generate_204", Icons.Rounded.NetworkCheck, enabled) { execute("网络检查", "test.http", buildJsonObject { put("url", "http://connect.rom.miui.com/generate_204") }, 120000) }
-                            if (state.groupReport != true) {
+                            if (personalEnabled) {
                                 ActionRow("微信取票测试", "验证个人定位模式的取票链路", Icons.Rounded.VerifiedUser, enabled) { pick(Forms.wxTest) }
                             }
                             ActionRow("全链路检查", "可能登录平台，不提交打卡", Icons.Rounded.Route, enabled) { pick(Forms.chain) }
@@ -121,9 +124,10 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                             ActionRow("运行状态", "网络名称、内存峰值与开发者日志", Icons.Rounded.Memory, true) { runtimePage = true }
                             val probeDescription = if (state.groupReport == true) "检查安全员会话和待确认人数" else "检查当前会话和前置状态"
                             ActionRow("设备体检", probeDescription, Icons.Rounded.HealthAndSafety, enabled) { execute("设备体检", "test.probe", timeout = 120000) }
-                            val submitTitle = if (state.groupReport == true) "手动小组确认" else "手动提交打卡"
+                            val submitTitle = if (groupEnabled && !personalEnabled) "手动小组确认" else "手动提交打卡"
                             ActionRow(submitTitle, "会真实提交，执行前请确认", Icons.Rounded.TaskAlt, enabled) {
-                                val detail = if (state.groupReport == true)
+                                val detail = if (accountModes) "设备按各账户保存的模式执行。发现组员联系不上时，请先在网页上报异常。"
+                                else if (state.groupReport == true)
                                     "设备将在窗口内批量确认当前安全员账号下符合条件的记录。发现组员联系不上时，请先在网页上报异常。"
                                 else "设备将在窗口内提交个人打卡，并核对今日记录。请确认设备与账号正确。"
                                 confirm = ConfirmAction("提交本次打卡？", detail) {
@@ -145,7 +149,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                     }
                     1 -> {
                         PageHeading("一次配置，安心运行", "每一步独立保存，以设备回执确认")
-                        Section("打卡模式") {
+                        if (!accountModes) Section("打卡模式") {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text("安全员小组确认", style = MaterialTheme.typography.titleMedium)
@@ -166,14 +170,15 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                         }
                         val steps = buildList {
                             add(Triple(Forms.wifi, "让设备接入宿舍的 2.4 GHz 网络", Icons.Rounded.Wifi))
-                            add(Triple(Forms.auth, "学号、密码与浏览器指纹", Icons.Rounded.PersonOutline))
-                            if (state.groupReport != true) {
+                            if (!accountModes) add(Triple(Forms.auth, "学号、密码与浏览器指纹", Icons.Rounded.PersonOutline))
+                            if (!accountModes && personalEnabled) {
                                 add(Triple(Forms.wx, "本人授权凭据与对应槽位", Icons.Rounded.VerifiedUser))
                                 add(Triple(Forms.location, "现场确认的纬度、经度和地址", Icons.Rounded.LocationOn))
                             }
-                            val schedule = if (state.groupReport == true) Forms.groupSchedule else Forms.schedule
+                            val schedule = if (groupEnabled) Forms.groupSchedule else Forms.schedule
                             add(Triple(schedule, "设置时间、截止窗口与随机抖动", Icons.Rounded.Schedule))
                         }
+                        if (accountModes) ActionRow("账户配置", "按账号设置凭据和打卡模式", Icons.Rounded.PersonOutline, enabled) { tab = 2 }
                         val saved = steps.count { it.first.step in state.configured }
                         Section("配置向导 · 本次连接已完成 $saved/${steps.size}") {
                             steps.forEachIndexed { index, (step, description, icon) ->
@@ -186,6 +191,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                                 Switch(checked = state.ready && state.auto, enabled = enabled, onCheckedChange = { on ->
                                     val detail = when {
                                         !on -> "暂停后设备将保留已保存的配置。"
+                                        accountModes -> "确认 WiFi、账户和计划均已保存。小组账户检查待确认人数，个人账户检查坐标和微信取票。"
                                         state.groupReport == true -> "请确认 WiFi、安全员账号和计划已保存，且设备体检能读取待确认人数。"
                                         else -> "请确认 WiFi、本人账号、微信授权、宿舍坐标和计划已保存，且体检与取票测试通过。"
                                     }
@@ -220,7 +226,7 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                         Note("配置提示", "输入只用于发送给当前设备。关闭表单会清空未提交内容；离开应用将断开连接。", Icons.Rounded.PrivacyTip)
                     }
                     2 -> {
-                        PageHeading("账号与授权", "每人独立授权，按槽位清晰管理")
+                        PageHeading("账户配置", "各账户独立设置打卡模式")
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(onClick = { pick(Forms.accountCreate) }, enabled = enabled) { Icon(Icons.Rounded.Add, null, Modifier.size(18.dp)); Text(" 添加账号") }
                             OutlinedButton(onClick = { execute("刷新账号与授权", "account.list") }, enabled = enabled) { Text("刷新列表") }
@@ -232,22 +238,31 @@ private val pageTitles = listOf("控制台", "配置", "账号", "帮助")
                             OutlinedButton(onClick = { pick(Forms.wx) }, enabled = enabled) { Text("导入本人授权") }
                         }
                         state.accounts.forEach { account ->
-                            Section("${account.label}  ·  槽位 ${account.slot}") {
-                                Text(account.user, style = MaterialTheme.typography.bodyMedium)
+                            Section(account.user.ifBlank { "主账号" }) {
+                                val mode = when (account.groupReport) {
+                                    true -> "小组确认"
+                                    false -> "个人定位"
+                                    null -> "设备未提供账户模式"
+                                }
+                                Text("$mode · ${account.label}", style = MaterialTheme.typography.bodyMedium)
                                 fun configured(value: Boolean?)=when(value) { true->"已配置";false->"未配置";else->"设备未提供" }
                                 Text("密码：${configured(account.passwordSet)} · 指纹：${configured(account.fingerprintSet)}",style=MaterialTheme.typography.bodySmall)
                                 Text("通知："+(listOfNotNull(if(state.notifyEnabled)"默认通道" else null)+state.channels.filter { it.accounts=="all" || account.label in it.accounts.split(',') }.map { it.label+if(it.enabled)"" else "（停用）" }).joinToString("、").ifEmpty { "未关联启用通道" },style=MaterialTheme.typography.bodySmall)
                                 Text("最近结果：${account.lastResult.trim().ifEmpty { "暂无记录" }}",style=MaterialTheme.typography.bodySmall)
 
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(if (account.authorized) "已保存微信授权" else "未保存微信授权", Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
+                                    Text(when {
+                                        account.groupReport == true -> "小组模式"
+                                        account.authorized -> "已保存微信授权"
+                                        else -> "未保存微信授权"
+                                    }, Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
                                     Switch(checked = account.enabled, enabled = enabled && !account.primary, onCheckedChange = { on ->
                                         execute(if (on) "启用账号" else "暂停账号", "account.enable", buildJsonObject { put("label", account.label); put("on", on) })
                                     })
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    TextButton(onClick = { pick(Forms.accountEdit.copy(inputs=Forms.accountEdit.inputs.map { if(it.key=="_target")it.copy(initial=account.label) else it })) }, enabled=enabled && !account.primary) { Text("修改") }
-                                    OutlinedButton(onClick = { pick(Forms.wx.copy(inputs = Forms.wx.inputs.map { if (it.key == "slot") it.copy(initial = account.slot.toString()) else it })) }, enabled = enabled) { Text("导入授权") }
+                                    TextButton(onClick = { pick(Forms.accountEdit.copy(inputs=Forms.accountEdit.inputs.map { if(it.key=="_target")it.copy(initial=account.label) else it })) }, enabled=enabled && (!account.primary || accountModes)) { Text("修改") }
+                                    if (account.groupReport != true) OutlinedButton(onClick = { pick(Forms.wx.copy(inputs = Forms.wx.inputs.map { if (it.key == "slot") it.copy(initial = account.slot.toString()) else it })) }, enabled = enabled) { Text("导入授权") }
                                     TextButton(onClick = { confirm = ConfirmAction("删除 ${account.label}？", "删除后设备会清除全部微信授权以避免槽位错配，请为保留账号重新导入授权。") { execute("删除账号", "account.remove", buildJsonObject { put("label", account.label) }) } }, enabled = enabled && !account.primary) { Text("删除", color = MaterialTheme.colorScheme.error) }
                                 }
                             }
@@ -383,6 +398,7 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
             form.inputs.forEach { put(it.key, it.initial) }
             put("_revision", state.accountRevision?.toString().orEmpty())
             put("slot", "0")
+            if ("account-mode" !in state.capabilities) remove("groupReport")
             if (form.op == "sched.set") {
                 put("at", state.at)
                 put("window_end", state.end)
@@ -398,7 +414,16 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
     LaunchedEffect(form, values["_target"], state.accountRevision) {
         if(form.op in setOf("wx.import","wx.test")) {
             clearWx()
-            values["slot"]=runCatching { AccountCommands.resolve(state.accounts,values["_target"].orEmpty()).slot.toString() }.getOrDefault("")
+            values["slot"] = runCatching {
+                val target = AccountCommands.resolve(state.accounts, values["_target"].orEmpty())
+                if (target.groupReport == true) "" else target.slot.toString()
+            }.getOrDefault("")
+        }
+        if (form.op == "account.patch") {
+            val target = runCatching { AccountCommands.resolve(state.accounts, values["_target"].orEmpty()) }.getOrNull()
+            values["user"] = target?.user.orEmpty()
+            for (key in listOf("pass", "bfp", "lat", "lng", "addr")) values[key] = ""
+            values["groupReport"] = target?.groupReport?.toString().orEmpty()
         }
     }
     var error by remember(form) { mutableStateOf<String?>(null) }
@@ -414,15 +439,25 @@ private fun Modifier.clipShape() = this.then(Modifier.background(Color.Transpare
                     val labels=values["_targets"].orEmpty().split(',').filter(String::isNotEmpty)
                     Row(verticalAlignment=Alignment.CenterVertically) {
                         Checkbox(checked=account.label in labels,enabled=account.enabled,onCheckedChange={ checked -> values["_targets"]=(if(checked) labels+account.label else labels-account.label).joinToString(",") })
-                        Text("#${account.slot} · ${account.label} · ${account.user}")
+                        Text("${account.user.ifBlank { account.label }} · ${if (account.groupReport == true) "小组确认" else "个人定位"}")
                     }
                 }
             }
             if(form.op in setOf("wx.import","wx.test"))Text(if(values["slot"].isNullOrBlank())"尚未匹配唯一账号" else "已匹配微信槽位 ${values["slot"]}")
             if (form.op == "wx.import" && !values["slot"].isNullOrBlank() && values["_revision"]==state.accountRevision?.toString()) QrAuthorizationPanel(values["slot"].orEmpty(), clearWx) { fields -> values.putAll(fields) }
             form.inputs.forEach { input ->
+                if (input.key == "groupReport" && "account-mode" !in state.capabilities) return@forEach
+                if (form.op in setOf("account.add", "account.patch") &&
+                    "account-mode" in state.capabilities && values["groupReport"] == "true" &&
+                    input.key in setOf("lat", "lng", "addr")) return@forEach
                 var visible by remember(input.key) { mutableStateOf(false) }
-                if (input.kind == Kind.Choice) {
+                if (input.kind == Kind.Toggle) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(input.title, Modifier.weight(1f))
+                        Switch(checked = values[input.key] == "true",
+                            onCheckedChange = { values[input.key] = it.toString() })
+                    }
+                } else if (input.kind == Kind.Choice) {
                     Text(input.title, style = MaterialTheme.typography.titleSmall)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         input.choices.forEach { choice -> FilterChip(selected = values[input.key] == choice, onClick = { values[input.key] = choice }, label = { Text(choice) }) }

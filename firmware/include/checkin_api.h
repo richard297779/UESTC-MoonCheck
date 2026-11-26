@@ -118,8 +118,9 @@ class CheckinApi {
   Result requestCheckinTicket(const String& code, const String& mpSessionId,
                               String& outTicket);
 
-  /// @brief 安装操作票据并记录属主（账号学号）与安装时间。
-  void setOperationTicket(const String& ticket, const String& owner) {
+  /// @brief 安装操作票据并记录账号标签、学号与安装时间。
+  void setOperationTicket(const String& ticket, const String& account, const String& owner) {
+    m_ticketAccount = account;
     m_operationTicket = ticket;
     m_ticketOwner = owner;
     m_ticketAtMs = millis();
@@ -128,10 +129,11 @@ class CheckinApi {
   void clearOperationTicket() {
     m_operationTicket = "";
     m_ticketOwner = "";
+    m_ticketAccount = "";
   }
   /// @brief 是否持有指定属主的新鲜票据（默认 25 min 内；票据实测 ~30 min 有效）。
-  bool hasFreshTicketFor(const String& owner, uint32_t maxAgeMs = 25UL * 60 * 1000) const {
-    if (m_operationTicket.length() != 43 || m_ticketOwner != owner) return false;
+  bool hasFreshTicketFor(const String& account, const String& owner, uint32_t maxAgeMs = 25UL * 60 * 1000) const {
+    if (m_operationTicket.length() != 43 || m_ticketAccount != account || m_ticketOwner != owner) return false;
     return static_cast<uint32_t>(millis() - m_ticketAtMs) < maxAgeMs;
   }
   /// @brief 当前是否持有操作票据。
@@ -149,6 +151,7 @@ class CheckinApi {
   void addH5Headers(HttpRequest& request, bool includeTicket = true);
   /// 当前票据；enterApp 仅清除过期票据（集中流程要求 21:00 取号、21:20 使用）。
   String m_operationTicket;
+  String m_ticketAccount;
   String m_ticketOwner;
   uint32_t m_ticketAtMs = 0;
   /// @brief GET 一个业务接口并校验 HTTP 状态。

@@ -43,6 +43,7 @@ ACCOUNT_TEMPLATE = {
     'label': '',
     'wechat': {},
     'enabled': True,
+    'group_report': True,
     'student_id': '',
     'password': '',
     'browser_fingerprint': '',
@@ -67,7 +68,9 @@ CHANNEL_TEMPLATE = {
 
 DEFAULTS = {
     'wechat': {},
-    'config_schema': 2,    'student_id': '',
+    'config_schema': 3,
+    'group_report': True,
+    'student_id': '',
     'password': '',
     'browser_fingerprint': '',
     'session_cookie': '',
@@ -78,7 +81,6 @@ DEFAULTS = {
     'schedule': {
         'checkin_at': '22:00',
         'window_end': '23:30',
-        'group_report': False,
     },
     'accounts': [],
     'notify': {
@@ -107,7 +109,7 @@ EDITABLE = {
     'location.network_type': '网络类型（载荷字段，如 4g/wifi）',
     'schedule.checkin_at': '打卡开始时间 HH:MM（默认 22:00）',
     'schedule.window_end': '打卡截止时间 HH:MM（默认 23:30）',
-    'schedule.group_report': '安全员网页小组确认（true/false，适用于所有启用账号）',
+    'group_report': '主账号的小组模式（true=小组确认，false=个人定位）',
     'notify.on': '推送开关（true/false）',
     'notify.url': '默认推送地址（Server酱 https://sctapi.ftqq.com/<SENDKEY>.send）',
     'notify.style': '推送方式 0=GET 模板 1=POST 文本 2=POST JSON',
@@ -138,10 +140,20 @@ def load(create=True):
         return cfg
     with open(path, 'r', encoding='utf-8') as f:
         loaded = json.load(f)
-    cfg = _merge(default_config(), loaded if isinstance(loaded, dict) else {})
-    cfg['config_schema'] = 2
-    # accounts/notify.channels 是数组：_merge 里 extra 直接覆盖，元素补齐模板键
-    cfg['accounts'] = [_merge(copy.deepcopy(ACCOUNT_TEMPLATE), a)
+    loaded = loaded if isinstance(loaded, dict) else {}
+    schedule = loaded.get('schedule')
+    legacy_group = isinstance(schedule, dict) and schedule.get('group_report') is True
+    legacy = loaded.get('config_schema') != 3 or (isinstance(schedule, dict) and 'group_report' in schedule)
+    if legacy:
+        primary = dict(loaded)
+        for account in [primary] + [a for a in loaded.get('accounts') or [] if isinstance(a, dict)]:
+            if account.get('student_id'):
+                account.setdefault('group_report', legacy_group)
+        loaded = primary
+    cfg = _merge(default_config(), loaded)
+    cfg['config_schema'] = 3
+    cfg['schedule'].pop('group_report', None)
+    cfg['accounts'] = [_merge(ACCOUNT_TEMPLATE, a)
                        for a in cfg.get('accounts') or [] if isinstance(a, dict)]
     notify = cfg.setdefault('notify', {})
     notify['channels'] = [_merge(copy.deepcopy(CHANNEL_TEMPLATE), c)
@@ -193,6 +205,14 @@ def get(cfg, dotted):
 def set_value(cfg, dotted, raw):
     """按点号路径写入。raw 为 None 时保持原类型（bool 会失败，需用命令行传值）。
     返回 (旧值, 新值)。"""
+    if dotted == 'schedule.group_report':
+        accounts = cfg.get('accounts') or []
+        if len(accounts) > 1:
+            raise ValueError('多个账户请分别使用 account mode 设置')
+        account = accounts[0] if accounts else cfg
+        old = account.get('group_report')
+        account['group_report'] = _coerce(raw, True)
+        return old, account['group_report']
     default = _default_for(dotted)
     value = _coerce(raw, default)
     parts = dotted.split('.')
@@ -237,6 +257,23 @@ def _coerce(raw, default):
 
 # ------------------------------------------------------- 账号表辅助
 
+def next_account_label(cfg):
+    used = set(account_labels(cfg))
+    return next(f'A{i:02d}' for i in range(1, MAX_ACCOUNTS + 2) if f'A{i:02d}' not in used)
+
+
+def promote_primary(cfg):
+    """Keep the active primary when the first additional account is added."""
+    if cfg.get('accounts') or not account_credentials_set(cfg):
+        return
+    profile = effective_accounts(cfg, only_enabled=False)[0]
+    profile.pop('_virtual')
+    for key in ('last_date', 'last_ok', 'last_msg'):
+        if key in cfg:
+            profile[key] = cfg[key]
+    cfg.setdefault('accounts', []).append(profile)
+
+
 def account_labels(cfg):
     return [str(a.get('label') or '') for a in cfg.get('accounts') or []]
 
@@ -257,6 +294,7 @@ def effective_accounts(cfg, only_enabled=True):
         return [{
             'label': 'self',
             'enabled': True,
+            'group_report': group_report_enabled(cfg),
             'student_id': cfg.get('student_id', ''),
             'password': cfg.get('password', ''),
             'browser_fingerprint': cfg.get('browser_fingerprint', ''),
@@ -367,8 +405,11 @@ def channel_matches(channel, account_label):
     return account_label in accounts
 
 
-def group_report_enabled(cfg):
-    return (cfg.get('schedule') or {}).get('group_report') is True
+def group_report_enabled(cfg, account=None):
+    profile = cfg if account is None else account
+    if 'group_report' in profile:
+        return profile['group_report'] is True
+    return (cfg.get('schedule') or {}).get('group_report', False) is True
 
 
 def in_window(cfg, now=None):
@@ -454,13 +495,11 @@ def validate(cfg):
             out.append(('warn', where,
                         '仍是示例坐标（打卡点中心）。换成你自己宿舍的实测坐标更稳妥'))
 
-    if not group_report_enabled(cfg):
-        check_loc('location', cfg.get('location') or {})
-        for a in accounts:
-            if isinstance(a.get('location'), dict):
-                check_loc('%s.location' % (a.get('label') or '?'), a['location'])
-    if type((cfg.get('schedule') or {}).get('group_report', False)) is not bool:
-        out.append(('error', 'schedule.group_report', '小组确认开关必须为布尔值'))
+    for account in effective_accounts(cfg):
+        if type(account.get('group_report', True)) is not bool:
+            out.append(('error', account['label'], '小组模式必须为布尔值'))
+        if not group_report_enabled(cfg, account):
+            check_loc('%s.location' % account['label'], account_location(cfg, account))
 
     timeout = get(cfg, 'timeout')
     if not isinstance(timeout, int) or timeout < 3 or timeout > 120:

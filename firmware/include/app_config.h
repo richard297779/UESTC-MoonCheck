@@ -54,7 +54,6 @@ class AppConfig {
   Result setWifi(const String& ssid, const String& password, const String& bssid = "",
                  uint8_t channel = 0);
   /// @brief 写入学号 / 密码 / 指纹（指纹可为空）。
-  Result setAuth(const String& studentId, const String& password, const String& fingerprint);
   /// @brief 写入打卡坐标与地址。
   Result setLocation(double latitude, double longitude, const String& address);
   /// @brief 写入打卡时间（"HH:MM"）、窗口结束与抖动秒数；windowStart 留空表示沿用当前值。
@@ -62,7 +61,8 @@ class AppConfig {
                      const String& windowStart = "");
   /// @brief 开关每日自动打卡。
   Result setAutoDaily(bool enabled);
-  Result setGroupReport(bool enabled);
+  Result setPrimaryProfile(const CheckinProfile& profile);
+  bool legacyGroupReport();
 
   /// @brief 重新从 NVS 载入配置（丢弃 applyProfile() 的运行期覆盖）。
   Result reload();
@@ -140,7 +140,7 @@ class AppConfig {
   bool hasActiveExtraChannel() const;
 
   /// @brief 记录最近一次打卡结果（持久化，掉电重启后仍可查询）。
-  Result setLastResult(const String& date, bool success, const String& message);
+  Result setLastResult(const String& date, bool success, const String& message, bool primary);
 
   /// @brief 最近一次打卡结果（JSON 片段，供 BLE status 使用）。
   String lastResultJson();
@@ -166,8 +166,9 @@ class AppConfig {
   WifiConfig m_wifi;
   AuthConfig m_auth;
   LocationConfig m_location;
+  LocationConfig m_primaryLocation;
   ScheduleConfig m_schedule;
-  std::atomic<bool> m_groupReport{false};
+  std::atomic<bool> m_groupReport{true};
   String m_deviceLabel;   ///< 自定义 BLE 名标签（空=用 MAC 尾号）
   String m_activeLabel = "device";  ///< 当前内存配置对应的账号标签（运行期，不落盘）
   uint16_t m_multiGapSeconds = 20;  ///< 账号之间的间隔秒数

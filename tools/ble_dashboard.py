@@ -12,18 +12,33 @@ from console_model import (group_pending_count, group_report_mode, mode_name, no
 
 
 def menu_groups():
-    groups = {
-        '状态查询': [OPERATIONS['状态'][1],OPERATIONS['状态'][0]]+OPERATIONS['状态'][2:-1],
-        '网络': OPERATIONS['网络'],
-        '账号配置': [s for s in OPERATIONS['账号与位置'] if s[1] in ('account.add', 'account.enable', 'account.remove', 'account.clear')],
-        '微信授权': OPERATIONS['微信授权'],
-        '调度与执行': OPERATIONS['调度与执行'],
-        '通知配置': OPERATIONS['通知'],
-        '设备设置': OPERATIONS['账号与位置'][:2] + OPERATIONS['开发者'][-1:],
-        '开发者工具': OPERATIONS['状态'][-1:] + OPERATIONS['开发者'][:-1] + [('原始 JSON', 'raw', [], '原始指令可能修改设备或提交打卡。')],
+    account_fields = [
+        ("user", "学号", "text", ""),
+        ("pass", "密码", "secret", ""),
+        ("bfp", "浏览器指纹", "secret", ""),
+        ("groupReport", "小组模式", "bool", True),
+        ("lat", "个人定位纬度（可空）", "float", ""),
+        ("lng", "个人定位经度（可空）", "float", ""),
+        ("addr", "个人定位地址（可空）", "text", ""),
+    ]
+    execution = OPERATIONS['调度与执行']
+    return {
+        '账户配置': [('新建账户', 'account.add', account_fields, ''),
+                     ('编辑账户', 'account.patch', account_fields, '')]
+                   + [s for s in OPERATIONS['账号与位置'] if s[1] in ('account.enable', 'account.remove')]
+                   + [(f'个人定位 · {title}', op, fields, note)
+                      for title, op, fields, note in OPERATIONS['微信授权']],
+        '今日打卡': [s for s in execution if s[1] in ('test.login', 'test.checkin', 'test.multi')]
+                   + [OPERATIONS['状态'][3], OPERATIONS['状态'][1]],
+        '计划与通知': [s for s in execution if s[1] in ('sched.set', 'auto.set', 'multi.set')]
+                     + OPERATIONS['通知'],
+        '设备与诊断': OPERATIONS['网络'] + [OPERATIONS['状态'][0], OPERATIONS['状态'][2]]
+                      + [s for s in execution if s[1] == 'test.chain'],
+        '开发者工具': OPERATIONS['状态'][-1:] + OPERATIONS['开发者']
+                      + [s for s in execution if s[1] == 'group.mode']
+                      + [s for s in OPERATIONS['账号与位置'] if s[1] in ('account.clear', 'loc.set', 'auth.set')]
+                      + [('原始 JSON', 'raw', [], '原始指令可能修改设备或提交打卡。')],
     }
-    groups['账号配置']=[(s[0],s[1],s[2],'仅修改有新输入的项；修改学号需重新导入微信授权。' if s[1]=='account.add' else s[3]) for s in groups['账号配置']]
-    return groups
 
 
 class Dashboard(Application):
@@ -39,7 +54,6 @@ class Dashboard(Application):
         self.pending_resolve = False
         self.target = None
         self.developer = tk.BooleanVar(value=False)
-        self.account_mode = tk.StringVar(value='update')
         self.match_kind = tk.StringVar(value='label')
         self.match_text = tk.StringVar()
         self.match_timer = None
@@ -86,8 +100,10 @@ class Dashboard(Application):
         row=ttk.Frame(self.account_tab);row.pack(fill='x',pady=(0,10))
         ttk.Label(row,text='序号从 0 开始，与微信槽位一致；学号完整显示。').pack(side='left')
         ttk.Button(row,text='刷新列表',command=self.refresh).pack(side='right')
-        ttk.Button(row,text='添加 / 修改账号',command=self.open_account).pack(side='right',padx=8)
-        self.account_table = self.make_table(self.account_tab,('序号','账号标签','学号','密码配置','浏览器指纹','微信授权','通知渠道配置','打卡启用','最近打卡结果'),(50,90,150,90,110,100,190,100,230))
+        ttk.Button(row,text='新建账户',command=lambda:self.open_account('account.add')).pack(side='right',padx=8)
+        ttk.Button(row,text='编辑账户',command=self.open_account).pack(side='right')
+        ttk.Button(row,text='登录与状态检查',command=lambda:self.open_account('test.login')).pack(side='right',padx=8)
+        self.account_table = self.make_table(self.account_tab,('序号','账号标签','学号','打卡模式','密码配置','浏览器指纹','微信授权','通知渠道配置','打卡启用','最近打卡结果'),(50,80,150,115,85,85,85,140,85,180))
         self.account_table.bind('<ButtonRelease-1>',self.toggle_account_click)
         self.account_table.bind('<space>',self.toggle_account_key)
         self.account_hint = tk.StringVar(value='连接后读取账号；点击启用列或按空格修改勾选，回执确认后生效。')
@@ -146,7 +162,7 @@ class Dashboard(Application):
         self.groups=menu_groups()
         if not self.developer.get():self.groups.pop('开发者工具')
         self.category['values']=list(self.groups)
-        self.category.set(old if old in self.groups else '状态查询')
+        self.category.set(old if old in self.groups else '账户配置')
         self.category_changed()
 
     def toggle_developer(self):
@@ -163,13 +179,20 @@ class Dashboard(Application):
     def current_spec(self):
         return self.groups[self.category.get()][self.operation.current()]
 
-    def open_account(self):
-        self.account_mode.set('update')
-        self.book.select(self.config_tab);self.category.set('账号配置');self.category_changed()
-        selection=self.account_table.selection()
-        if selection:
-            row=next((a for a in self.accounts if str(a['slot'])==selection[0]),None)
-            if row:self.match_kind.set('label');self.match_text.set(row['label']);self.resolve_target()
+    def open_account(self, operation='account.patch'):
+        selection = self.account_table.selection()
+        target = next((row for row in self.accounts if selection and str(row['slot']) == selection[0]), None)
+        category = '今日打卡' if operation == 'test.login' else '账户配置'
+        self.book.select(self.config_tab)
+        self.category.set(category)
+        self.category_changed()
+        self.operation.current(next(i for i, spec in enumerate(self.groups[category]) if spec[1] == operation))
+        self.render_operation()
+        if target and operation == 'account.patch':
+            self.match_text.set(target['label'])
+            self.resolve_target()
+        elif target and operation == 'test.login' and target.get('enabled'):
+            self.selected[target['label']].set(True)
 
     def render_operation(self):
         self.cancel_qr()
@@ -179,16 +202,17 @@ class Dashboard(Application):
         spec=self.current_spec();op=spec[1]
         self.state={'specs':self.groups[self.category.get()],'choice':self.operation,'vars':{},'dirty':False}
         self.forms=[self.state]
-        self.form_note.set(spec[3] if op!='account.add' else '已有账号：仅提交非空字段。新建账号：标签、学号、密码、指纹必填。')
+        self.form_note.set({
+            'account.add': '学号、密码、浏览器指纹为必填项',
+            'account.patch': '密码和指纹留空保留已有值',
+        }.get(op, spec[3]))
         self.qr_button.pack_forget()
         ttk.Label(self.form_frame,text=spec[0],font=('Microsoft YaHei UI',13,'bold')).pack(anchor='w',pady=(0,10))
         if op=='raw':
             self.raw=ScrolledText(self.form_frame,height=6,font=('Consolas',11));self.raw.pack(fill='x');self.raw.insert('1.0','{"op":"status"}');return
-        if op=='account.add':
-            row=ttk.Frame(self.form_frame);row.pack(fill='x',pady=(0,8))
-            for value,title in [('update','修改已有账号'),('create','新建账号')]:
-                ttk.Radiobutton(row,text=title,variable=self.account_mode,value=value,command=self.render_operation).pack(side='left',padx=(0,18))
-        needs_target=op in ('wx.import','wx.test','account.enable','account.remove') or (op=='account.add' and self.account_mode.get()=='update')
+        account_form = op in ('account.add', 'account.patch')
+        self.location_fields = []
+        needs_target = op in ('wx.import','wx.test','account.enable','account.remove','account.patch')
         if needs_target:
             row=ttk.Frame(self.form_frame);row.pack(fill='x',pady=(0,7))
             ttk.Label(row,text='按').pack(side='left')
@@ -211,24 +235,37 @@ class Dashboard(Application):
         self.hints={}
         index=0
         for key,title,kind,initial in spec[2]:
-            if needs_target and key in ('slot','label') and op!='account.add':
+            if needs_target and key in ('slot','label'):
                 self.state['vars'][key]=tk.StringVar(value='0' if key=='slot' else '');continue
             initial=device_defaults(op,self.snapshot).get(key,initial)
-            if op=='account.add':initial=''
+            if key == 'groupReport' and not self.account_snapshot.get('accountMode'):
+                continue
             var=tk.BooleanVar(value=initial) if kind=='bool' else tk.StringVar(value=initial)
             self.state['vars'][key]=var
             cell=ttk.Frame(fields,padding=(0,0,12,8));cell.grid(row=index//4,column=index%4,sticky='nsew');index+=1
-            if op=='account.add' and key=='bfp':title='浏览器指纹（新建必填）'
+            if account_form and key in ('lat', 'lng', 'addr'):
+                self.location_fields.append(cell)
             ttk.Label(cell,text=title,wraplength=250).pack(anchor='w')
             widget=ttk.Checkbutton(cell,variable=var) if kind=='bool' else ttk.Entry(cell,textvariable=var,show='•' if kind=='secret' else '')
             var.trace_add('write',lambda *_args:self.state.update(dirty=True))
+            if key == 'groupReport':
+                var.trace_add('write', lambda *_args: self.show_personal_fields())
             widget.pack(fill='x',pady=4)
-            hint=tk.StringVar(value='留空保留原值' if op=='account.add' and self.account_mode.get()=='update' else '')
+            hint=tk.StringVar(value='留空保留原值' if op=='account.patch' and key in ('pass', 'bfp') else '')
             self.hints[key]=hint
             ttk.Label(cell,textvariable=hint,foreground='#8190a3',wraplength=250,font=('Microsoft YaHei UI',8)).pack(anchor='w')
         if op=='wx.import':self.qr_button.pack(side='right',padx=8)
+        self.show_personal_fields()
         self.state['dirty']=False
         self.canvas.yview_moveto(0)
+
+    def show_personal_fields(self):
+        mode = self.state['vars'].get('groupReport')
+        for cell in self.location_fields:
+            if mode is not None and mode.get():
+                cell.grid_remove()
+            else:
+                cell.grid()
 
     def rebuild_targets(self):
         if not self.target_group:return
@@ -236,7 +273,8 @@ class Dashboard(Application):
         self.selected={}
         for i,account in enumerate(self.accounts):
             var=tk.BooleanVar(value=False);self.selected[account['label']]=var
-            ttk.Checkbutton(self.target_group,text=f"#{account['slot']} · {account['label']} · {account.get('user','')}",variable=var,state='normal' if account.get('enabled') else 'disabled').grid(row=i//2,column=i%2,sticky='w',padx=12,pady=5)
+            self_target = f"{account.get('user') or account['label']} · {mode_name(account.get('groupReport'))}"
+            ttk.Checkbutton(self.target_group,text=self_target,variable=var,state='normal' if account.get('enabled') else 'disabled').grid(row=i//2,column=i%2,sticky='w',padx=12,pady=5)
         if not self.accounts:ttk.Label(self.target_group,text='请先连接并读取账号表').grid(row=0,column=0)
         else:ttk.Button(self.target_group,text='全选已启用账号',command=lambda:[self.selected[a['label']].set(bool(a.get('enabled'))) for a in self.accounts]).grid(row=(len(self.accounts)+1)//2,column=0,sticky='w')
 
@@ -249,7 +287,11 @@ class Dashboard(Application):
             raise ValueError('目标已变化，请重新匹配账号')
 
     def start_qr(self,state):
-        try:self.require_v2();self.check_target()
+        try:
+            self.require_v2()
+            self.check_target()
+            if self.target.get('groupReport') is True:
+                raise ValueError('请选择使用个人定位的账户')
         except ValueError as error:messagebox.showinfo('请先匹配账号',str(error));return
         super().start_qr(state)
 
@@ -272,14 +314,18 @@ class Dashboard(Application):
         try:
             self.target_revision=self.account_snapshot.get('revision')
             self.target=resolve_account(self.accounts,self.match_text.get(),kind)
-            self.resolved.set(f"已匹配 #{self.target['slot']} · {self.target['label']} · {self.target.get('user','')}，微信槽位 {self.target['slot']}")
+            self.resolved.set(f"已匹配 {self.target.get('user') or self.target['label']} · {mode_name(self.target.get('groupReport'))}")
             if 'slot' in self.state['vars']:self.state['vars']['slot'].set(str(self.target['slot']))
-            if 'label' in self.state['vars'] and self.current_spec()[1]!='account.add':self.state['vars']['label'].set(self.target['label'])
-            if self.current_spec()[1]=='account.add':
-                for key,hint in self.hints.items():
-                    value=self.target.get({'pass':'passwordSet','bfp':'fingerprintSet'}.get(key,key),'设备未提供')
-                    if key in ('pass','bfp'):value='已配置' if value else '未配置'
-                    hint.set('当前：'+str(value)+' · 留空不改')
+            variables = self.state['vars']
+            if 'label' in variables: variables['label'].set(self.target['label'])
+            if self.current_spec()[1] == 'account.patch':
+                variables['user'].set(self.target.get('user', ''))
+                for key in ('pass', 'bfp', 'lat', 'lng', 'addr'):
+                    variables[key].set('')
+                if 'groupReport' in variables:
+                    variables['groupReport'].set(self.target.get('groupReport', False))
+                for key, flag in (('pass', 'passwordSet'), ('bfp', 'fingerprintSet')):
+                    self.hints[key].set('已设置，留空保留' if self.target.get(flag) else '未设置，请填写')
         except ValueError as error:
             self.target=None;self.resolved.set(str(error))
 
@@ -294,10 +340,13 @@ class Dashboard(Application):
             values={k:v.get() for k,v in self.state['vars'].items()}
             if op=='group.mode' and group_report_mode(self.snapshot) is None:
                 raise ValueError('设备未提供打卡模式，请先刷新状态，旧固件需升级')
-            if op=='account.add':
+            if op in ('account.add', 'account.patch'):
                 self.require_v2()
-                if self.account_mode.get()=='update':self.check_target()
-                payload=patch_payload(self.account_snapshot,values,self.target,self.account_mode.get()=='create')
+                if op == 'account.patch': self.check_target()
+                if values.get('groupReport') is True:
+                    for key in ('lat', 'lng', 'addr'):
+                        values.pop(key, None)
+                payload = patch_payload(self.account_snapshot, values, self.target, op == 'account.add')
             elif op in ('test.login','test.chain','test.checkin','test.multi'):
                 self.require_v2();base=build_payload(spec,values);base.pop('op')
                 targets=[a for a in self.accounts if self.selected.get(a['label']) and self.selected[a['label']].get()]
@@ -311,12 +360,15 @@ class Dashboard(Application):
                     self.require_v2()
                     self.check_target()
                     payload['expectedRevision']=self.account_snapshot['revision']
-                    if op.startswith('wx.'):payload.update(target=self.target['label'],slot=self.target['slot'])
+                    if op.startswith('wx.'):
+                        if self.target.get('groupReport') is True:
+                            raise ValueError('请选择使用个人定位的账户')
+                        payload.update(target=self.target['label'], slot=self.target['slot'])
                     else:
                         if self.target.get('primary'):raise ValueError('主账号请在设备设置中管理')
                         payload['label']=self.target['label']
                 if op=='account.clear':self.require_v2();payload['expectedRevision']=self.account_snapshot['revision']
-            if spec[3] or op in ('account.add','account.clear'):
+            if spec[3] or op in ('account.add','account.patch','account.clear'):
                 target_text='、'.join(payload.get('targets',[])) or payload.get('target',payload.get('label','当前设备'))
                 message=f"设备：{self.device.get()}\n目标：{target_text}\n操作：{spec[0]}\n{spec[3]}"
                 if op == 'group.mode':
@@ -349,7 +401,7 @@ class Dashboard(Application):
         return 'break'
 
     def toggle_account_click(self,event):
-        if self.account_table.identify_column(event.x)=='#8':
+        if self.account_table.identify_column(event.x)=='#9':
             row=self.account_table.identify_row(event.y)
             if row:self.toggle_account(row)
 
@@ -414,7 +466,7 @@ class Dashboard(Application):
         slots={s.get('slot'):s for s in self.snapshot.get('wxSlots',[])}
         for row in self.accounts:
             wx=slots.get(row['slot'],{})
-            self.account_table.insert('','end',iid=str(row['slot']),values=(row['slot'],'主账号' if row.get('primary') else row['label'],row.get('user','未提供'),'设备未提供' if 'passwordSet' not in row else '已配置' if row['passwordSet'] else '未配置','设备未提供' if 'fingerprintSet' not in row else '已配置' if row['fingerprintSet'] else '未配置','已保存' if wx.get('present') or wx.get('valid') else '未授权',notification_labels(self.snapshot.get('notification',{}),row['label']),'单人模式' if row.get('primary') else '☑ 启用' if row.get('enabled') else '☐ 停用',(row.get('lastDate','')+' '+row.get('lastMsg','')).strip() or '暂无记录'))
+            self.account_table.insert('','end',iid=str(row['slot']),values=(row['slot'],'主账号' if row.get('primary') else row['label'],row.get('user','未提供'),mode_name(row.get('groupReport')),'设备未提供' if 'passwordSet' not in row else '已配置' if row['passwordSet'] else '未配置','设备未提供' if 'fingerprintSet' not in row else '已配置' if row['fingerprintSet'] else '未配置','无需取票' if row.get('groupReport') is True else '已保存' if wx.get('present') or wx.get('valid') else '未授权',notification_labels(self.snapshot.get('notification',{}),row['label']),'主账号' if row.get('primary') else '☑ 启用' if row.get('enabled') else '☐ 停用',(row.get('lastDate','')+' '+row.get('lastMsg','')).strip() or '暂无记录'))
         self.account_hint.set(f"共 {len(self.accounts)} 个账号 · "+('账号快照已读取' if 'revision' in self.account_snapshot else '旧固件只提供打码摘要；完整学号与安全管理需升级固件'))
 
     def consume(self,message):
@@ -422,17 +474,20 @@ class Dashboard(Application):
         if msg=='status' and isinstance(data,dict):
             self.snapshot.update(data);cfg=data.get('cfg',{});net=data.get('net',{});run=data.get('runtime',{});schedule=cfg.get('schedule',{})
             rows=[('设备名称',cfg.get('device','—'),'当前设备'),('固件版本',data.get('fw','—'),''),('已连接网络',net.get('ssid') or '未连接',''),('IP 地址',net.get('ip','—'),''),('设备时间',net.get('deviceTime','—'),''),('自动打卡','开启' if schedule.get('autoDaily') else '关闭',''),('计划时间',schedule.get('checkinAt','—'),''),('下次执行',data.get('schedule',{}).get('nextRun','—'),''),('最近结果',data.get('last',{}).get('message','暂无'),'')]
-            rows.insert(5, ('打卡模式', mode_name(group_report_mode(data)), ''))
+            rows.insert(5, ('活动账户模式', mode_name(group_report_mode(data)), '各账户模式见账号列表'))
             for key,title in [('heapPeakUsedBytes','内部堆峰值'),('heapFreeBytes','可用内部堆'),('psramFreeBytes','可用 PSRAM')]:rows.append((title,str(run[key])+' B' if key in run else '设备未提供',''))
             self.overview_table.delete(*self.overview_table.get_children())
             for row in rows:self.overview_table.insert('','end',values=row)
             self.updated.set('最近读取 '+datetime.datetime.now().strftime('%H:%M:%S'))
         elif msg=='account snapshot' and isinstance(data,dict):
             changed=self.account_snapshot.get('revision')!=data.get('revision')
+            had_mode = self.account_snapshot.get('accountMode')
             self.account_snapshot=data;self.accounts=snapshot_accounts(data)
+            if had_mode != data.get('accountMode') and self.current_spec()[1] in ('account.add', 'account.patch'):
+                self.render_operation()
             if changed:
                 self.cancel_qr();self.target=None;self.target_revision=None
-                for key in ('openid','access','refresh'):
+                for key in ('openid','access','refresh','pass','bfp'):
                     if key in self.state['vars']:self.state['vars'][key].set('')
                 if hasattr(self,'resolved'):self.resolved.set('账号表已刷新，请重新匹配目标')
                 self.rebuild_targets()

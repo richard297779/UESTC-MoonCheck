@@ -32,7 +32,9 @@ constexpr const char* kNvsSchStart = "sch_start";
 constexpr const char* kNvsSchEnd = "sch_end";
 constexpr const char* kNvsSchJitter = "sch_jitter";
 constexpr const char* kNvsSchAuto = "sch_auto";
-constexpr const char* kNvsGroupReport = "group_report";
+constexpr const char* kNvsGroupReport = "group_report";  // legacy fallback for existing records
+constexpr const char* kNvsPrimary = "primary_profile";
+constexpr const char* kNvsLastOwner = "last_owner";
 constexpr const char* kNvsLastGroup = "last_group";
 constexpr const char* kNvsTlsMode = "tls_mode";
 constexpr const char* kNvsLastDate = "last_date";
@@ -173,14 +175,11 @@ Result AppConfig::loadAll() {
   }
 
   // ---- 账号 ----
-  m_auth.studentId = getStringSafe(m_prefs, kNvsAuthUser, "");
-  m_auth.password = getStringSafe(m_prefs, kNvsAuthPass, "");
-  m_auth.fingerprint = getStringSafe(m_prefs, kNvsAuthBfp, "");
-
-  // ---- 定位（默认写入实测宿舍坐标）----
-  m_location.latitude = m_prefs.getDouble(kNvsLocLat, kDefaultLatitude);
-  m_location.longitude = m_prefs.getDouble(kNvsLocLng, kDefaultLongitude);
-  m_location.address = getStringSafe(m_prefs, kNvsLocAddr, kDefaultAddress);
+  const auto primary = storedProfile();
+  m_auth = {primary.studentId, primary.password, primary.fingerprint};
+  m_primaryLocation = {primary.latitude, primary.longitude, primary.address};
+  m_location = m_primaryLocation;
+  m_groupReport.store(primary.groupReport);
 
   // ---- 时段 ----
   m_schedule.windowStart = getStringSafe(m_prefs, kNvsSchStart, "21:00");
@@ -188,7 +187,6 @@ Result AppConfig::loadAll() {
   m_schedule.windowEnd = getStringSafe(m_prefs, kNvsSchEnd, "23:30");
   m_schedule.jitterSeconds = static_cast<uint16_t>(m_prefs.getUShort(kNvsSchJitter, 30));
   m_schedule.autoDailyEnabled = m_prefs.getBool(kNvsSchAuto, true);
-  m_groupReport.store(m_prefs.getBool(kNvsGroupReport, false));
   m_schedule.windowStartMinutes = parseHhmm(m_schedule.windowStart);
   m_schedule.checkinAtMinutes = parseHhmm(m_schedule.checkinAt);
   m_schedule.windowEndMinutes = parseHhmm(m_schedule.windowEnd);
@@ -252,34 +250,13 @@ Result AppConfig::setWifi(const String& ssid, const String& password, const Stri
   return result;
 }
 
-Result AppConfig::setAuth(const String& studentId, const String& password,
-                          const String& fingerprint) {
-  if (studentId.length() == 0 || password.length() == 0) return Result::InvalidParam;
-  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  m_auth.studentId = studentId;
-  m_auth.password = password;
-  if (fingerprint.length() > 0) m_auth.fingerprint = fingerprint;
-  Result result = persistString(kNvsAuthUser, m_auth.studentId);
-  if (result == Result::Ok) result = persistString(kNvsAuthPass, m_auth.password);
-  if (result == Result::Ok) result = persistString(kNvsAuthBfp, m_auth.fingerprint);
-  if (m_mutex) xSemaphoreGive(m_mutex);
-  LOG_I(kTag, "auth saved: user=%s bfp=%s", studentId.c_str(),
-        m_auth.hasFingerprint() ? "set" : "none");
-  return result;
-}
-
 Result AppConfig::setLocation(double latitude, double longitude, const String& address) {
   if (latitude == 0.0 || longitude == 0.0) return Result::InvalidParam;
-  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  m_location.latitude = latitude;
-  m_location.longitude = longitude;
-  if (address.length() > 0) m_location.address = address;
-  m_prefs.putDouble(kNvsLocLat, latitude);
-  m_prefs.putDouble(kNvsLocLng, longitude);
-  Result result = persistString(kNvsLocAddr, m_location.address);
-  if (m_mutex) xSemaphoreGive(m_mutex);
-  LOG_I(kTag, "location saved: %.6f,%.6f", latitude, longitude);
-  return result;
+  auto primary = storedProfile();
+  primary.latitude = latitude;
+  primary.longitude = longitude;
+  if (address.length() > 0) primary.address = address;
+  return setPrimaryProfile(primary);
 }
 
 Result AppConfig::setSchedule(const String& checkinAt, const String& windowEnd,
@@ -320,13 +297,33 @@ Result AppConfig::setAutoDaily(bool enabled) {
   return Result::Ok;
 }
 
-Result AppConfig::setGroupReport(bool enabled) {
-  if (!m_opened) return Result::NotReady;
+bool AppConfig::legacyGroupReport() {
+  return m_prefs.isKey(kNvsGroupReport) && m_prefs.getBool(kNvsGroupReport, false);
+}
+
+Result AppConfig::setPrimaryProfile(const CheckinProfile& profile) {
+  JsonDocument doc;
+  doc["user"] = profile.studentId;
+  doc["password"] = profile.password;
+  doc["fingerprint"] = profile.fingerprint;
+  doc["lat"] = profile.latitude;
+  doc["lng"] = profile.longitude;
+  doc["addr"] = profile.address;
+  doc["groupReport"] = profile.groupReport;
+  String serialized;
+  if (doc.overflowed() || serializeJson(doc, serialized) != measureJson(doc)) return Result::InternalError;
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  const bool saved = m_prefs.putBool(kNvsGroupReport, enabled) > 0;
-  if (saved) m_groupReport.store(enabled);
+  const Result result = persistString(kNvsPrimary, serialized);
+  if (result == Result::Ok) {
+    m_primaryLocation = {profile.latitude, profile.longitude, profile.address};
+    if (m_activeLabel == "device") {
+      m_auth = {profile.studentId, profile.password, profile.fingerprint};
+      m_location = m_primaryLocation;
+      m_groupReport.store(profile.groupReport);
+    }
+  }
   if (m_mutex) xSemaphoreGive(m_mutex);
-  return saved ? Result::Ok : Result::StorageError;
+  return result;
 }
 
 Result AppConfig::reload() {
@@ -343,6 +340,8 @@ void AppConfig::applyProfile(const CheckinProfile& profile) {
   m_auth.studentId = profile.studentId;
   m_auth.password = profile.password;
   m_auth.fingerprint = profile.fingerprint;
+  m_groupReport.store(profile.groupReport);
+  m_location = m_primaryLocation;
   if (profile.hasLocation()) {
     m_location.latitude = profile.latitude;
     m_location.longitude = profile.longitude;
@@ -358,7 +357,8 @@ CheckinProfile AppConfig::deviceProfile() const {
   // 语义上等价于"列表里的第一个用户"（老设备只配过 auth 也能直接跑）。
   CheckinProfile profile;
   profile.enabled = true;
-  profile.label = m_deviceLabel.length() > 0 ? m_deviceLabel : String("self");
+  profile.groupReport = groupReportEnabled();
+  profile.label = m_activeLabel;
   profile.studentId = m_auth.studentId;
   profile.password = m_auth.password;
   profile.fingerprint = m_auth.fingerprint;
@@ -377,6 +377,22 @@ CheckinProfile AppConfig::storedProfile() {
   p.latitude = m_prefs.getDouble(kNvsLocLat, kDefaultLatitude);
   p.longitude = m_prefs.getDouble(kNvsLocLng, kDefaultLongitude);
   p.address = getStringSafe(m_prefs, kNvsLocAddr, kDefaultAddress);
+  p.groupReport = p.studentId.length() > 0 ? legacyGroupReport() : true;
+  if (m_prefs.isKey(kNvsPrimary)) {
+    JsonDocument doc;
+    if (deserializeJson(doc, getStringSafe(m_prefs, kNvsPrimary, "")) ||
+        !doc["groupReport"].is<bool>()) {
+      LOG_E(kTag, "primary profile invalid");
+      return CheckinProfile();
+    }
+    p.studentId = doc["user"] | "";
+    p.password = doc["password"] | "";
+    p.fingerprint = doc["fingerprint"] | "";
+    p.latitude = doc["lat"] | kDefaultLatitude;
+    p.longitude = doc["lng"] | kDefaultLongitude;
+    p.address = doc["addr"] | kDefaultAddress;
+    p.groupReport = doc["groupReport"].as<bool>();
+  }
   return p;
 }
 
@@ -465,8 +481,11 @@ bool AppConfig::isLastResultOkFor(const String& date) {
   if (!m_opened || date.length() == 0) return false;
   const String storedDate = getStringSafe(m_prefs, kNvsLastDate, "");
   if (storedDate != date) return false;
-  return m_prefs.getBool(kNvsLastOk, false) &&
-         m_prefs.getBool(kNvsLastGroup, false) == groupReportEnabled();
+  const auto primary = storedProfile();
+  return primary.studentId.length() > 0 &&
+         getStringSafe(m_prefs, kNvsLastOwner, "") == primary.studentId &&
+         m_prefs.getBool(kNvsLastOk, false) &&
+         m_prefs.getBool(kNvsLastGroup, false) == primary.groupReport;
 }
 
 Result AppConfig::setNotify(int enabled, int style, const String& url, int gap, int quota) {
@@ -676,12 +695,13 @@ String AppConfig::notifyChannelsJson() const {
   return json;
 }
 
-Result AppConfig::setLastResult(const String& date, bool success, const String& message) {
+Result AppConfig::setLastResult(const String& date, bool success, const String& message, bool primary) {
   if (!m_opened) return Result::NotReady;
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   const bool saved = m_prefs.putBool(kNvsLastOk, false) > 0 &&
                      m_prefs.putString(kNvsLastDate, date) > 0 &&
                      m_prefs.putBool(kNvsLastGroup, groupReportEnabled()) > 0 &&
+                     m_prefs.putString(kNvsLastOwner, primary ? m_auth.studentId : String("-")) > 0 &&
                      m_prefs.putString(kNvsLastMsg, message) > 0 &&
                      m_prefs.putULong(kNvsLastTs, static_cast<uint32_t>(time(nullptr))) > 0 &&
                      m_prefs.putBool(kNvsLastOk, success) > 0;

@@ -7,7 +7,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -95,10 +95,24 @@ class TestWxCommands(unittest.IsolatedAsyncioTestCase):
         self.console._on_notify(None, b'{"msg":"probe done","data":{"recordStatusCode":"GROUP_CLEAR","sessionValid":true,"groupPendingCount":0}}')
         self.assertIn("小组待确认人数：0", self.output.getvalue())
 
-    async def test_account_add_allows_omitted_optional_fingerprint(self):
+    async def test_account_creation_requires_fingerprint_and_defaults_to_group_mode(self):
         await self.console.run_command('account add A01 fixture-user fixture-password')
-        self.assertEqual(self.client.writes[0]['op'], 'account.add')
-        self.assertNotIn('bfp', self.client.writes[0])
+        self.assertEqual(self.client.writes, [])
+        self.console._on_notify(None, b'{"msg":"account snapshot","data":{"accountMode":true,"revision":17,"accounts":[]}}')
+        with patch('ble_console.sys.stdin', Mock(isatty=lambda: True)), \
+             patch('ble_console.asyncio.to_thread', new_callable=AsyncMock, return_value='fixture-password'):
+            await self.console.run_command('account new fixture-user 0123456789abcdef0123456789abcdef')
+        self.assertEqual(self.client.writes[0]['op'], 'account.patch')
+        self.assertTrue(self.client.writes[0]['fields']['groupReport'])
+        self.console._on_notify(None, b'{"msg":"fixture-password"}')
+        self.assertNotIn('fixture-password', self.output.getvalue())
+
+    async def test_group_mode_targets_one_account_and_list_shows_student_id(self):
+        self.console._on_notify(None, b'{"msg":"account snapshot","data":{"accountMode":true,"revision":8,"accounts":[{"slot":0,"label":"A01","user":"fixture-full-id","groupReport":true,"fingerprintSet":true}]}}')
+        self.assertIn('fixture-full-id', self.output.getvalue())
+        await self.console.run_command('group off A01')
+        self.assertEqual(self.client.writes[0], dict(op='account.patch', create=False, expectedRevision=8,
+                                                    target='A01', fields=dict(groupReport=False), id=1))
 
     async def test_raw_command_requires_a_json_object(self):
         await self.console.run_command("raw []")
