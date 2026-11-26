@@ -1,6 +1,6 @@
 # MoonCheck Android 控制端
 
-v0.8.0 原生 Kotlin + Jetpack Compose 安卓控制端，通过 BLE 连接 ESP32。包含控制台、配置向导、账号管理、诊断、通知管理与可离线搜索的帮助。
+v0.9.0 原生 Kotlin + Jetpack Compose 安卓控制端，通过 BLE 连接 ESP32。包含控制台、配置向导、账号管理、诊断、通知管理与可离线搜索的帮助。
 
 ## 使用
 
@@ -35,7 +35,7 @@ Windows：
 ./build-local.ps1
 ```
 
-也可直接执行（Gradle 从仓库根目录 `VERSION` 读取 versionName；versionCode 当前为 800）：
+也可直接执行（Gradle 从仓库根目录 `VERSION` 读取 versionName；versionCode 当前为 900）：
 
 ```text
 gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest

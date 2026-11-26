@@ -6,6 +6,8 @@
 
 #include <ArduinoJson.h>
 
+#include <algorithm>
+
 #include "logger.h"
 
 namespace {
@@ -43,6 +45,12 @@ void CheckinService::resetLoginState() {
   m_lastLoginMs = 0;
 }
 
+Result CheckinService::probeGroup(unsigned& pendingCount) {
+  const Result authorized = m_api->authorizeGroupReport(m_config->auth().studentId);
+  if (authorized != Result::Ok) return authorized;
+  return m_api->fetchGroupPendingCount(pendingCount);
+}
+
 Result CheckinService::probe(ProbeReport& out, String& outError) {
   if (m_api == nullptr || m_config == nullptr || m_time == nullptr) return Result::NotReady;
 
@@ -50,9 +58,11 @@ Result CheckinService::probe(ProbeReport& out, String& outError) {
   out = ProbeReport();
   out.deviceTime = m_time->nowString();
   // 窗口起点优先用平台时段，其次用本地配置的"窗口起点"（默认 21:00，不再误用打卡目标时间）
-  out.windowStartMinutes = m_scheduleKnown ? m_lastSchedule.checkinStartMinutes
+  const bool groupReport = m_config->groupReportEnabled();
+  const bool usePlatformWindow = m_scheduleKnown && !groupReport;
+  out.windowStartMinutes = usePlatformWindow ? m_lastSchedule.checkinStartMinutes
                                            : m_config->schedule().windowStartMinutes;
-  out.windowEndMinutes = m_scheduleKnown ? m_lastSchedule.checkinEndMinutes
+  out.windowEndMinutes = usePlatformWindow ? m_lastSchedule.checkinEndMinutes
                                          : m_config->schedule().windowEndMinutes;
 
   const auto finishReport = [&]() {
@@ -78,7 +88,11 @@ Result CheckinService::probe(ProbeReport& out, String& outError) {
   out.h5Reached = h5Reached;
   out.appAuthorized = h5Reached;
 
-  if (!h5Reached) {
+  if (!h5Reached && groupReport) {
+    m_api->fetchH5Page(&out.h5PageReached);
+  }
+
+  if (!h5Reached && !(groupReport && out.h5PageReached)) {
     // 顺手确认"界面本身能不能打开"：H5 静态页恒为 200（浏览器任意时间都能进界面就是这个原因），
     // 据此把两种情况区分开：
     //   ① h5Page=true ：界面能进、只是平台未授权该会话打卡（会话不是登录态 / 预热也救不回来）；
@@ -98,6 +112,20 @@ Result CheckinService::probe(ProbeReport& out, String& outError) {
     LOG_W(kTag, "probe: app NOT authorized (enter=%s, h5Page=%d) -> skip business API",
           resultName(enterResult), h5PageReached ? 1 : 0);
     return Result::Ok;  // 体检本身完成，原因见 appAuthorized=false
+  }
+
+  if (groupReport) {
+    const Result result = probeGroup(out.groupPendingCount);
+    out.sessionValid = result == Result::Ok;
+    out.appAuthorized = out.sessionValid;
+    out.h5Reached = out.appAuthorized;
+    if (out.sessionValid) {
+      out.today.recordStatusCode = out.groupPendingCount ? "GROUP_PENDING" : "GROUP_CLEAR";
+    } else {
+      outError = String("group report unavailable: ") + resultName(result);
+    }
+    finishReport();
+    return result == Result::SessionInvalid ? Result::Ok : result;
   }
 
   // ---- EP06 今日状态 ----
@@ -140,7 +168,7 @@ bool CheckinService::isLoginWindowNow() const {
 
   int start = 0;
   int end = 0;
-  if (m_scheduleKnown) {
+  if (m_scheduleKnown && m_config != nullptr && !m_config->groupReportEnabled()) {
     start = m_lastSchedule.checkinStartMinutes;
     end = m_lastSchedule.checkinEndMinutes;
   } else if (m_config != nullptr) {
@@ -173,11 +201,23 @@ Result CheckinService::ensureSession(bool& outDidLogin, String& outError, bool f
       m_api->enterApp(&h5Reached);
     }
   }
+  const bool groupReport = m_config != nullptr && m_config->groupReportEnabled();
+  if (!h5Reached && groupReport) m_api->fetchH5Page(&h5Reached);
   if (h5Reached) {
-    TodayStatus probeStatus;
-    if (m_api->fetchToday(probeStatus) == Result::Ok) {
-      outError = "";
-      return Result::Ok;
+    if (groupReport) {
+      unsigned pendingCount = 0;
+      const Result result = probeGroup(pendingCount);
+      if (result != Result::SessionInvalid) {
+        outError = result == Result::Ok ? String() :
+                   String("group report unavailable: ") + resultName(result);
+        return result;
+      }
+    } else {
+      TodayStatus probeStatus;
+      if (m_api->fetchToday(probeStatus) == Result::Ok) {
+        outError = "";
+        return Result::Ok;
+      }
     }
   }
 
@@ -280,6 +320,8 @@ CheckinOutcome CheckinService::perform(bool force, String& outMessage) {
     return CheckinOutcome::OutOfWindow;
   }
 
+  if (m_config->groupReportEnabled()) return performGroup(report, outMessage);
+
   // ---- 微信操作票据（平台 2026-10-23 起强制）----
   // enterApp 会清空旧票据，故在提交前安装：无票据且配置了供给回调时现场取票
   // （凭据刷新 → login_buffer → MMTLS 取码 → check-bind → 换票，约 10 s）。
@@ -352,4 +394,63 @@ CheckinOutcome CheckinService::perform(bool force, String& outMessage) {
   outMessage = "submitted but not verified yet";
   LOG_W(kTag, "%s", outMessage.c_str());
   return CheckinOutcome::Failed;
+}
+
+CheckinOutcome CheckinService::performGroup(const ProbeReport& report, String& outMessage) {
+  if (!m_time->isSynced()) {
+    outMessage = "group report requires synchronized time";
+    return CheckinOutcome::Failed;
+  }
+  const String date = m_time->todayString();
+  std::vector<GroupPendingRecord> records;
+  unsigned pendingCount = 0;
+  Result result = m_api->fetchGroupPending(date, records);
+  if (result == Result::Ok) result = m_api->fetchGroupPendingCount(pendingCount);
+  if (result != Result::Ok || pendingCount != records.size()) {
+    outMessage = "group pending list could not be verified";
+    return CheckinOutcome::Failed;
+  }
+  if (records.empty()) {
+    outMessage = "no group records pending today";
+    return CheckinOutcome::AlreadyDone;
+  }
+  const unsigned eligible = std::count_if(records.begin(), records.end(),
+      [](const GroupPendingRecord& row) { return row.allowNormal; });
+  if (eligible == 0) {
+    outMessage = String("manual group review required: ") + String(pendingCount);
+    return CheckinOutcome::Failed;
+  }
+  if (!m_time->isSynced() || m_time->todayString() != date ||
+      !m_time->inWindow(report.windowStartMinutes, report.windowEndMinutes)) {
+    outMessage = "group report date or window changed before submission";
+    return CheckinOutcome::OutOfWindow;
+  }
+
+  result = m_api->submitGroupNormal(records);
+  if (result != Result::Ok) {
+    outMessage = String("group report not acknowledged, check web status (") +
+                 resultName(result) + ")";
+    return CheckinOutcome::Failed;
+  }
+  std::vector<GroupPendingRecord> remaining;
+  result = m_api->fetchGroupPending(date, remaining);
+  if (result == Result::Ok) result = m_api->fetchGroupPendingCount(pendingCount);
+  if (result != Result::Ok || pendingCount != remaining.size() || m_time->todayString() != date) {
+    outMessage = "group report acknowledged, verification failed";
+    return CheckinOutcome::Failed;
+  }
+  for (const GroupPendingRecord& row : remaining) {
+    if (std::any_of(records.begin(), records.end(), [&row](const GroupPendingRecord& old) {
+          return old.allowNormal && old.id == row.id;
+        })) {
+      outMessage = "group report acknowledged, submitted records still pending";
+      return CheckinOutcome::Failed;
+    }
+  }
+  outMessage = String("group records confirmed: ") + String(eligible);
+  if (pendingCount > 0) {
+    outMessage += String(", records still pending: ") + String(pendingCount);
+    return CheckinOutcome::Failed;
+  }
+  return CheckinOutcome::Success;
 }

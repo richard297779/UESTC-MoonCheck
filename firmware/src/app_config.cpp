@@ -32,6 +32,8 @@ constexpr const char* kNvsSchStart = "sch_start";
 constexpr const char* kNvsSchEnd = "sch_end";
 constexpr const char* kNvsSchJitter = "sch_jitter";
 constexpr const char* kNvsSchAuto = "sch_auto";
+constexpr const char* kNvsGroupReport = "group_report";
+constexpr const char* kNvsLastGroup = "last_group";
 constexpr const char* kNvsTlsMode = "tls_mode";
 constexpr const char* kNvsLastDate = "last_date";
 constexpr const char* kNvsLastOk = "last_ok";
@@ -186,6 +188,7 @@ Result AppConfig::loadAll() {
   m_schedule.windowEnd = getStringSafe(m_prefs, kNvsSchEnd, "23:30");
   m_schedule.jitterSeconds = static_cast<uint16_t>(m_prefs.getUShort(kNvsSchJitter, 30));
   m_schedule.autoDailyEnabled = m_prefs.getBool(kNvsSchAuto, true);
+  m_groupReport.store(m_prefs.getBool(kNvsGroupReport, false));
   m_schedule.windowStartMinutes = parseHhmm(m_schedule.windowStart);
   m_schedule.checkinAtMinutes = parseHhmm(m_schedule.checkinAt);
   m_schedule.windowEndMinutes = parseHhmm(m_schedule.windowEnd);
@@ -317,6 +320,15 @@ Result AppConfig::setAutoDaily(bool enabled) {
   return Result::Ok;
 }
 
+Result AppConfig::setGroupReport(bool enabled) {
+  if (!m_opened) return Result::NotReady;
+  if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
+  const bool saved = m_prefs.putBool(kNvsGroupReport, enabled) > 0;
+  if (saved) m_groupReport.store(enabled);
+  if (m_mutex) xSemaphoreGive(m_mutex);
+  return saved ? Result::Ok : Result::StorageError;
+}
+
 Result AppConfig::reload() {
   if (!m_opened) return Result::NotReady;
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
@@ -418,7 +430,7 @@ String AppConfig::toJsonSummary() const {
            "\"passwordSet\":%s,\"fingerprintSet\":%s,"
            "\"location\":{\"lat\":%.6f,\"lng\":%.6f,\"address\":\"%s\"},"
            "\"schedule\":{\"checkinAt\":\"%s\",\"windowEnd\":\"%s\",\"jitterSeconds\":%u,"
-           "\"autoDaily\":%s},\"accountGap\":%u,"
+           "\"autoDaily\":%s,\"groupReport\":%s},\"accountGap\":%u,"
            "\"notifyOn\":%s,\"notifyStyle\":\"%s\",\"notifyUrl\":\"%s\"}",
            bleDeviceName().c_str(), m_activeLabel.c_str(), m_deviceLabel.c_str(),
            m_wifi.ssid.c_str(), m_wifi.isConfigured() ? "true" : "false", maskedUser.c_str(),
@@ -426,7 +438,7 @@ String AppConfig::toJsonSummary() const {
            m_location.latitude, m_location.longitude, m_location.address.c_str(),
            m_schedule.checkinAt.c_str(), m_schedule.windowEnd.c_str(), m_schedule.jitterSeconds,
            m_schedule.autoDailyEnabled ? "true" : "false",
-           m_multiGapSeconds,
+           groupReportEnabled() ? "true" : "false", m_multiGapSeconds,
             m_notifyEnabled ? "true" : "false",
             m_notifyStyle == 0 ? "get" : (m_notifyStyle == 1 ? "post_text" : "post_json"),
             notifyUrlMasked().c_str());
@@ -452,7 +464,8 @@ bool AppConfig::isLastResultOkFor(const String& date) {
   if (!m_opened || date.length() == 0) return false;
   const String storedDate = getStringSafe(m_prefs, kNvsLastDate, "");
   if (storedDate != date) return false;
-  return m_prefs.getBool(kNvsLastOk, false);
+  return m_prefs.getBool(kNvsLastOk, false) &&
+         m_prefs.getBool(kNvsLastGroup, false) == groupReportEnabled();
 }
 
 Result AppConfig::setNotify(int enabled, int style, const String& url, int gap, int quota) {
@@ -665,11 +678,14 @@ String AppConfig::notifyChannelsJson() const {
 Result AppConfig::setLastResult(const String& date, bool success, const String& message) {
   if (!m_opened) return Result::NotReady;
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
-  m_prefs.putString(kNvsLastDate, date);
-  m_prefs.putBool(kNvsLastOk, success);
-  m_prefs.putString(kNvsLastMsg, message);
-  m_prefs.putULong(kNvsLastTs, static_cast<uint32_t>(time(nullptr)));
+  const bool saved = m_prefs.putBool(kNvsLastOk, false) > 0 &&
+                     m_prefs.putString(kNvsLastDate, date) > 0 &&
+                     m_prefs.putBool(kNvsLastGroup, groupReportEnabled()) > 0 &&
+                     m_prefs.putString(kNvsLastMsg, message) > 0 &&
+                     m_prefs.putULong(kNvsLastTs, static_cast<uint32_t>(time(nullptr))) > 0 &&
+                     m_prefs.putBool(kNvsLastOk, success) > 0;
   if (m_mutex) xSemaphoreGive(m_mutex);
+  if (!saved) return Result::StorageError;
   LOG_I(kTag, "last result saved: date=%s ok=%d", date.c_str(), success ? 1 : 0);
   return Result::Ok;
 }

@@ -378,6 +378,17 @@ void CommandRouter::dispatchCommand(const String& line) {
     handleScheduleSet(request, id);
   } else if (op == "auto.set") {
     handleAutoSet(request, id);
+  } else if (op == "group.mode") {
+    if (m_config == nullptr) {
+      replyError(id, Result::NotReady, "config unavailable");
+    } else if (!request["enabled"].is<bool>()) {
+      replyError(id, Result::InvalidParam, "enabled must be boolean");
+    } else {
+      const bool enabled = request["enabled"].as<bool>();
+      const Result result = m_config->setGroupReport(enabled);
+      if (result != Result::Ok) replyError(id, result, "group mode save failed");
+      else replyOk(id, enabled ? "group reporting enabled" : "group reporting disabled");
+    }
   } else if (op == "notify.set") {
     handleNotifySet(request, id);
   } else if (op == "notify.status") {
@@ -627,7 +638,12 @@ void CommandRouter::handleAccountPatch(JsonObjectConst request,int32_t id) {
   const int collision=m_accounts->indexOfLabel(profile.label);
   if (!creating && collision>=0 && collision!=index) { replyError(id,Result::InvalidParam,"label already exists"); return; }
   const bool identityChanged=!creating && previous.studentId!=profile.studentId;
-  if (identityChanged) { profile.lastDate=""; profile.lastOk=false; profile.lastMsg=""; }
+  if (identityChanged) {
+    profile.lastDate = "";
+    profile.lastOk = false;
+    profile.lastGroupReport = false;
+    profile.lastMsg = "";
+  }
   const int authorizationSlot=creating?static_cast<int>(m_accounts->count()):index;
   if (m_wxCred && (creating || identityChanged) && m_wxCred->remove(authorizationSlot)!=Result::Ok) {
     replyError(id,Result::StorageError,"cannot clear prior authorization; account unchanged"); return;
@@ -1086,6 +1102,10 @@ void CommandRouter::workTestLogin(const WorkItem& item) {
   m_checkin->probe(report, probeError);
   setBusy(false);
   flashResult(report.sessionValid);
+  if (m_config->groupReportEnabled() && !report.sessionValid) {
+    replyError(item.requestId, Result::AppUnavailable, probeError);
+    return;
+  }
 
   String data = "{\"didLogin\":";
   data += didLogin ? "true" : "false";
@@ -1180,8 +1200,10 @@ void CommandRouter::workTestChain(const WorkItem& item) {
   // ---- 5) 业务接口（只有进得了界面才有意义）----
   ProbeReport report;
   String probeError;
-  if (appEntry) {
+  const bool groupReport = m_config->groupReportEnabled();
+  if (appEntry || groupReport) {
     m_checkin->probe(report, probeError);
+    if (groupReport) appEntry = report.appAuthorized;
   } else {
     report.h5Reached = false;
     report.sessionValid = false;
@@ -1259,14 +1281,15 @@ void CommandRouter::workTestProbe(const WorkItem& item) {
            "{\"sessionValid\":%s,\"h5Reached\":%s,\"h5Page\":%s,\"deviceTime\":\"%s\","
            "\"window\":\"%s\",\"inWindow\":%s,\"windowFromPlatform\":%s,"
            "\"recordStatusCode\":\"%s\",\"checkinTime\":\"%s\",\"distanceMeter\":%.1f,"
-           "\"abnormalFlag\":%s,\"location\":\"%s\",\"radiusMeter\":%d,\"elapsedMs\":%u}",
+           "\"abnormalFlag\":%s,\"location\":\"%s\",\"radiusMeter\":%d,"
+           "\"groupPendingCount\":%u,\"elapsedMs\":%u}",
            report.sessionValid ? "true" : "false", report.h5Reached ? "true" : "false",
            report.h5PageReached ? "true" : "false", report.deviceTime.c_str(),
            report.windowText.c_str(), report.inWindow ? "true" : "false",
            report.windowFromPlatform ? "true" : "false", report.today.recordStatusCode.c_str(),
            report.today.checkinTime.c_str(), report.today.distanceMeter,
            report.today.abnormalFlag ? "true" : "false", report.location.name.c_str(),
-           report.location.radiusMeter, static_cast<unsigned>(report.elapsedMs));
+           report.location.radiusMeter, report.groupPendingCount, static_cast<unsigned>(report.elapsedMs));
 
   // 手动 test.probe：只回结果。定时触发的体检（Trigger::Probe）现在一律走
   // workMultiCheckin(probe)，21:00 的每日状态摘要在那里发。
@@ -1299,7 +1322,8 @@ void CommandRouter::workTestCheckin(const WorkItem& item) {
     if (m_config != nullptr) {
       if (soleAccount) m_config->setLastResult(todayKey, ok, message);
       if (m_accounts != nullptr && m_accounts->indexOfLabel(who)>=0) {
-        m_accounts->setResult(m_config->activeAccount(), todayKey, ok, message);
+        m_accounts->setResult(m_config->activeAccount(), todayKey, ok, message,
+                              m_config->groupReportEnabled());
         LOG_I(kTag, "manual check-in for %s recorded per-account; global last untouched",
               m_config->activeAccount().c_str());
       }
@@ -1705,7 +1729,8 @@ void CommandRouter::workDeadlineMissed(const WorkItem& item) {
     CheckinProfile profile;
     for (size_t i = 0; i < m_accounts->count(); i++) {
       if (!m_accounts->get(i, profile) || !profile.enabled) continue;
-      if (m_accounts->isCheckedInToday(profile.label, today)) continue;
+      const bool groupReport = m_config != nullptr && m_config->groupReportEnabled();
+      if (m_accounts->isCheckedInToday(profile.label, today, groupReport)) continue;
       String oneBody = profile.label + "：窗口已关闭，今天仍未打卡成功。";
       if (profile.lastMsg.length() > 0 && profile.lastDate == today) {
         oneBody += "最后原因：" + profile.lastMsg;
@@ -1833,7 +1858,8 @@ void CommandRouter::workWxTest(const WorkItem& item) {
 
 void CommandRouter::workWxPrefetch(const WorkItem& item) {
   // 首个启用账号未必是槽位 0；预取也必须验证当前身份与账号标签。
-  if (m_wxCred == nullptr || m_api == nullptr || m_config == nullptr) return;
+  if (m_wxCred == nullptr || m_api == nullptr || m_config == nullptr ||
+      m_config->groupReportEnabled()) return;
   const String owner = m_config->auth().studentId;
   const int slot=m_accounts?activeAuthorizationSlot<CheckinProfile>(*m_accounts,m_config->activeAccount(),owner):0;
   if(slot<0) { LOG_W("wx_prefetch","active account mapping unavailable; defer to account runner"); return; }

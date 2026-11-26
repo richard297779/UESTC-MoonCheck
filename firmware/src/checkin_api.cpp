@@ -98,8 +98,10 @@ Result CheckinApi::begin(HttpClient& http) {
   return Result::Ok;
 }
 
-void CheckinApi::addH5Headers(HttpRequest& request) {
-  if (m_operationTicket.length() > 0) request.addHeader("X-Checkin-Ticket", m_operationTicket);
+void CheckinApi::addH5Headers(HttpRequest& request, bool includeTicket) {
+  if (includeTicket && m_operationTicket.length() > 0) {
+    request.addHeader("X-Checkin-Ticket", m_operationTicket);
+  }
   request.addHeader("Platform", "h5");
   request.addHeader("Accept", "*/*");
   request.addHeader("Origin", AppConst::kJzszBaseUrl);
@@ -109,24 +111,26 @@ void CheckinApi::addH5Headers(HttpRequest& request) {
   request.addHeader("Sec-Fetch-Dest", "empty");
 }
 
-Result CheckinApi::getJson(const String& path, HttpResponse& response) {
+Result CheckinApi::getJson(const String& path, HttpResponse& response, bool includeTicket) {
   if (m_http == nullptr) return Result::NotReady;
 
   HttpRequest request;
   request.method = "GET";
   request.url = String(AppConst::kJzszBaseUrl) + path;
-  addH5Headers(request);
+  addH5Headers(request, includeTicket);
 
   const Result result = m_http->request(request, response);
   if (result != Result::Ok) return result;
 
-  if (response.status == 301 || response.status == 302) {
+  if (response.status == 301 || response.status == 302 ||
+      (!includeTicket && (response.status == 303 || response.status == 307 || response.status == 308))) {
     LOG_W(kTag, "%s -> %d (session invalid)", path, response.status);
     return Result::SessionInvalid;
   }
-  if (response.status == 401 || response.status == 403) {
+  if (response.status == 401 || (includeTicket && response.status == 403)) {
     return Result::SessionInvalid;
   }
+  if (response.status == 403) return Result::AuthFailed;
   if (response.status != 200) {
     return Result::HttpError;
   }

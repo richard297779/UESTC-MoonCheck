@@ -525,7 +525,7 @@ def _main_cli(argv):
         sub.add_argument('label', nargs='?', help='账号标签；省略=单人模式或全部账号')
         sub.add_argument('--dry-run', action='store_true', help='只打印将要提交的载荷，不联网')
         sub.add_argument('--force', action='store_true',
-                         help='忽略打卡窗口/已打卡状态强制发送')
+                         help='允许越过本地窗口，个人模式可重打，仍受平台校验')
         sub.add_argument('--reverse', action='store_true', help='提交前用平台逆地理编码校准地址')
         ns = sub.parse_args(rest)
         res = service.do_checkin(cfg, log, label=ns.label, force=ns.force,

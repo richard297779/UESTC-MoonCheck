@@ -35,6 +35,12 @@ class GuiTests(unittest.TestCase):
         entries=[w for w in self.app.tab_wechat.winfo_children() if isinstance(w,gui.ttk.Entry) and not isinstance(w,gui.ttk.Combobox)]
         self.assertEqual(['*','*','*',''],[entry.cget('show') for entry in entries])
 
+    def test_group_mode_persists_from_schedule_tab(self):
+        self.assertFalse(self.app.group_report.get())
+        self.app.group_report.set(True)
+        self.app._on_save()
+        self.assertTrue(config.group_report_enabled(config.load()))
+
     def test_import_persists_only_selected_account_and_clears_inputs(self):
         for key,value in dict(openid='fixture-openid',access='fixture-access',refresh='fixture-refresh',expires_at='0').items():self.app.wx_vars[key].set(value)
         self.app._wx_import()

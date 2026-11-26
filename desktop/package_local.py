@@ -39,22 +39,26 @@ def main():
         config_path.write_text(json.dumps(cfg,ensure_ascii=False),encoding='utf-8')
         environment = os.environ.copy();environment['MOONCHECK_CONFIG'] = str(config_path)
         environment['TEMP'] = environment['TMP'] = folder
-        for args in (['--version'],['selftest'],['checkin','--dry-run'],['wx','status']):
+        for args in (['--version'], ['selftest'], ['checkin', '--dry-run'], ['wx', 'status'],
+                     ['config', 'set', 'schedule.group_report', 'true'], ['auto', '--dry-run']):
             result = subprocess.run([str(executable)]+args,env=environment,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=40)
             assert result.returncode == 0,'Frozen smoke command failed: '+str(args)+' '+ascii(result.stderr[:300])
             if args == ['--version']:assert version.encode() in result.stdout
             if args == ['selftest']:assert b'PASS' in result.stdout
-    print('Frozen smoke: version, crypto selftest, dry-run and authorization status passed')
+            if args == ['auto', '--dry-run']:
+                assert b'"recordId":' in result.stdout and b'"action":"NORMAL"' in result.stdout
+    print('Frozen smoke: version, crypto selftest, personal and group dry-run, authorization status passed')
     guide = '''# MoonCheck Desktop {version} (Windows)
 
 这是桌面端本地测试构建，未完成真实桌面账号联调；固件/Android 的确认不代表桌面已实测。
 
 1. 解压整个目录至本人可写、受保护的位置，双击 MoonCheck.exe。无需安装 Python。
-2. 基本页填写 CAS 学号、密码、本人浏览器指纹和现场坐标；保存配置。
-3. 多人先新增账号并保存；微信授权页选择所属账号，填写本人 openid/access/refresh。到期 Unix 秒未知可填 0，导入立即保存。
-4. 初次微信授权仍由本人通过 QR Connect 准备。不要同时在固件、另一台电脑或授权网页刷新同一套授权。
-5. 先取票测试（不提交），再登录、查状态；允许窗口内真实打卡并复查。自动化由系统调度器调用 MoonCheck.exe auto，程序不会创建系统任务。
-6. config.json 含明文凭据，不要共享；界面导出为递归脱敏副本。与 config.json 同目录的 .lock 文件由程序管理，不必手动删除。
+2. 使用新版安全员小组确认时，配置本人 CAS 登录，在「打卡时间」页开启小组确认并保存。用 status 查待确认人数。个人定位模式按下列步骤配置微信和位置。
+3. 基本页填写 CAS 学号、密码、本人浏览器指纹和现场坐标；保存配置。
+4. 多人先新增账号并保存；微信授权页选择所属账号，填写本人 openid/access/refresh。到期 Unix 秒未知可填 0，导入立即保存。
+5. 初次微信授权仍由本人通过 QR Connect 准备。不要同时在固件、另一台电脑或授权网页刷新同一套授权。
+6. 先取票测试（不提交），再登录、查状态；允许窗口内真实打卡并复查。自动化由系统调度器调用 MoonCheck.exe auto，程序不会创建系统任务。
+7. config.json 含明文凭据，不要共享；界面导出为递归脱敏副本。与 config.json 同目录的 .lock 文件由程序管理，不必手动删除。
 
 CLI: MoonCheck.exe --version / wx import / wx status / wx test / checkin --dry-run / auto。
 多账号授权使用 wx import -a A01 / wx test -a A01，不能借用其他账号的授权。

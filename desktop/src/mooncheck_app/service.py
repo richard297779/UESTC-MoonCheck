@@ -16,7 +16,7 @@ Result.kind：ok / warn / fail / mfa / not_configured。
 import datetime
 import json
 
-from . import aes, cas_auth, checkin_api, config, push, wechat
+from . import aes, cas_auth, checkin_api, config, group_report, push, wechat
 from .http_client import HttpClient, NetworkError, DEFAULT_UA
 
 
@@ -126,14 +126,27 @@ def _login_chain(cfg, log, acct):
     return client, session
 
 
+def _probe_account(cfg, client, api, log, acct):
+    if not config.group_report_enabled(cfg):
+        ok, data, note = probe(client, api, log)
+        return ok, data, note, not ok
+    group = group_report.GroupReport(api, str(acct.get('student_id') or ''))
+    try:
+        return True, {'pending_count': group.probe()}, '', False
+    except group_report.GroupReportError as error:
+        return False, None, str(error), error.session_expired
+    except NetworkError as error:
+        return False, None, str(error), False
+
+
 def _ensure_session(cfg, log, acct):
     """复用已有会话，失效则登录。返回 (client, api, ok, note)。"""
     client = build_client(cfg, log, acct)
     api = _api(cfg, client)
-    ok, data, note = probe(client, api, log)
+    ok, data, note, allow_login = _probe_account(cfg, client, api, log, acct)
     if ok:
         return client, api, ok, note, data
-    if not config.account_credentials_set(acct):
+    if not allow_login or not config.account_credentials_set(acct):
         return client, api, False, note, None
     log('账号 %s：会话不可用（%s），尝试登录 ...' % (acct.get('label'), note))
     client2, res = _login_chain(cfg, log, acct)
@@ -141,7 +154,7 @@ def _ensure_session(cfg, log, acct):
         return client, api, False, '登录失败：%s' % res.text, None
     client = client2 or client
     api = _api(cfg, client)
-    ok, data, note = probe(client, api, log)
+    ok, data, note, _ = _probe_account(cfg, client, api, log, acct)
     return client, api, ok, note, data
 
 
@@ -186,7 +199,7 @@ def do_login(cfg, log, label=None):
                 return res
             continue
         api = _api(cfg, client)
-        ok, data, note = probe(client, api, log)
+        ok, data, note, _ = _probe_account(cfg, client, api, log, acct)
         kinds.append('ok' if ok else 'warn')
         rows.append((acct.get('label'),
                      '登录成功，打卡接口可用' if ok else '登录成功但状态复查失败：%s' % note))
@@ -217,6 +230,9 @@ def do_status(cfg, log, label=None):
             rows.append(('%s' % acct.get('label'), '会话不可用：%s' % note))
             continue
         last_data = data
+        if config.group_report_enabled(cfg):
+            rows.append(('%s 小组待确认人数' % acct.get('label'), str(data['pending_count'])))
+            continue
         summary = checkin_api.safe_summary(data)
         rows.append(('%s 今日状态' % acct.get('label'), summary.get('recordStatusCode')))
         if summary.get('abnormalFlag'):
@@ -241,6 +257,9 @@ def do_status(cfg, log, label=None):
                             one['radiusMeter'])))
             except Exception:
                 pass
+    if config.group_report_enabled(cfg):
+        return Result(worst, '已查询小组待确认状态' if worst == 'ok' else '小组状态查询失败',
+                      rows=rows, data=last_data)
     status = (last_data or {}).get('recordStatusCode')
     text = ('会话有效，今日状态：%s' % status) if len(accounts) == 1 and last_data \
         else '%d 个账号状态已查询' % len(accounts)
@@ -250,6 +269,22 @@ def do_status(cfg, log, label=None):
 def _checkin_one(cfg, log, acct, force, use_reverse):
     """单账号打卡全链。返回 (kind, label, text, rows)。不抛异常。"""
     label = acct.get('label') or 'self'
+    if config.group_report_enabled(cfg):
+        today = config.datetime_now().date().isoformat()
+        _client, api, ok, note, _data = _ensure_session(cfg, log, acct)
+        if not ok:
+            return 'fail', label, '小组上报前置检查失败：%s' % note, []
+
+        def can_submit():
+            now = config.datetime_now()
+            return now.date().isoformat() == today and (force or config.in_window(cfg, now))
+
+        group = group_report.GroupReport(api, str(acct.get('student_id') or ''))
+        kind, text = group_report.check_in(group, today, can_submit)
+        if kind == 'ok' and config.datetime_now().date().isoformat() != today:
+            kind, text = 'warn', '复查时日期已变化，请查看网页结果'
+        config.save_account_result(cfg, acct, today, kind == 'ok', text)
+        return kind, label, text, []
     try:
         wechat.validate_credentials(acct.get('wechat'))
     except wechat.ProtocolError as error:
@@ -330,11 +365,15 @@ def _checkin_one(cfg, log, acct, force, use_reverse):
 
 def do_checkin(cfg, log, label=None, force=False, dry_run=False, use_reverse=False):
     if dry_run:
-        acct = resolve_account(cfg, label) if label else (
-            config.effective_accounts(cfg)[0] if cfg.get('accounts') else
-            {'label': 'self', 'location': None})
+        accounts = config.effective_accounts(cfg)
+        acct = resolve_account(cfg, label) if label else (accounts[0] if accounts else None)
         if acct is None:
-            return Result('fail', '找不到账号 %s' % label)
+            return Result('fail', '找不到账号 %s' % label if label else '没有启用的账号')
+        if config.group_report_enabled(cfg):
+            return Result('ok', 'DRY-RUN：小组批量确认（未联网）',
+                          rows=[('账号', acct.get('label')),
+                                ('POST', group_report.REPORT),
+                                ('Body', '[{"recordId":"当天待确认记录 ID","action":"NORMAL"}]')])
         loc = config.account_location(cfg, acct)
         if 'latitude' not in loc or 'longitude' not in loc:
             return Result('not_configured', 'config.json 缺少 location 坐标')
@@ -453,7 +492,7 @@ def selftest(cfg, log):
 
     try:
         api = checkin_api.CheckinApi(None, cfg.get('app_id') or 294)
-        for acct in accounts:
+        for acct in ([] if config.group_report_enabled(cfg) else accounts):
             loc = config.account_location(cfg, acct)
             payload = api.build_payload(loc, DEFAULT_UA)
             missing = [k for k in ('latitude', 'longitude', 'clientTime', 'userAgent')

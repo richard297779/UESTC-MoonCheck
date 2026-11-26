@@ -1,13 +1,13 @@
-# v0.8.0 板型支持与验证反馈
+# v0.9.0 板型支持与验证反馈
 
-更新日期：2026-10-29。固件 / Android 为 **0.8.0**、versionCode **800**、协议 **1**。用户确认“基本功能已查验无误”并授权 Latest；未提供逐板型、手机和逐项流程明细，不补造测试记录。
+2026-11-26 本地验证版为 **0.9.0**，Android versionCode **900**，BLE 协议 **1**。小组确认的实机与真实账号联调待验证。已发布 v0.8.0 的验收范围见其[发行说明](../release/v0.8.0/CHANGELOG.md)。
 
 维护者只能实测 **ESP32-S3-N16R8** 和 **ESP-WROOM-32**。其余四型号均 **未经实际验证**；编译通过仅说明当前工具链可生成产物。欢迎验证者向开发者反馈。
 
 | 发行板型 ID | PlatformIO 环境 | 硬件规格 | 状态 |
 | --- | --- | --- | --- |
-| `s3-n16r8` | `esp32-s3-devkitc-1` | 16 MB Flash / 8 MB OPI PSRAM；GPIO48 RGB | 原有目标；本次具体测试板型未指明 |
-| `wroom32-4mb` | `esp32-wroom-32` | 4 MB Flash，无 PSRAM；GPIO2 普通 LED | 原有目标；本次具体测试板型未指明 |
+| `s3-n16r8` | `esp32-s3-devkitc-1` | 16 MB Flash / 8 MB OPI PSRAM；GPIO48 RGB | 原有目标，小组确认待实测 |
+| `wroom32-4mb` | `esp32-wroom-32` | 4 MB Flash，无 PSRAM；GPIO2 普通 LED | 原有目标，小组确认待实测 |
 | `wrover-4mb` | `esp32-wrover-4mb` | 确定为 4 MB Flash / 8 MB QSPI PSRAM；LED 默认关闭 | 实验构建，未经实际验证 |
 | `s3-n8` | `esp32-s3-n8` | 8 MB Flash，无 PSRAM；GPIO48 RGB | 实验构建，未经实际验证 |
 | `s3-n8r8` | `esp32-s3-n8r8` | 8 MB Flash / 8 MB OPI PSRAM；GPIO48 RGB | 实验构建，未经实际验证 |
@@ -26,12 +26,12 @@ pio run -d firmware -e esp32-s3-devkitc-1 -e esp32-wroom-32 -e esp32-wrover-4mb 
 python tools/board_targets.py --validate-builds --include-experimental
 ./android/build-local.ps1
 ./dev/tools/make_release.ps1 -NoUpload -IncludeExperimental
-python tools/check_project.py --release-dir release/v0.8.0
+python tools/check_project.py --release-dir release/v0.9.0
 ```
 
 默认打包不带 `-IncludeExperimental` 时，只选原有 S3-N16R8/WROOM-32。`-Only c3-devkitm-1-4mb` 可单独选择实验目标；旧 `-Only s3` / `wroom32` 仍只选择原有对应目标。
 
-每个目标独立输出 `wanan-0.8.0-<板型ID>-merged.bin` 与 `…-full.zip`。APK 通用一份，不按板型拆分。目录 `firmware/board-targets.json` 与构建生成 `board-build.json` 交叉核对硬件配置；打包时检查实际镜像芯片、分区范围、OTA 槽容量和烧录偏移。
+每个目标独立输出 `wanan-0.9.0-<板型ID>-merged.bin` 与 `…-full.zip`。APK 通用一份，不按板型拆分。目录 `firmware/board-targets.json` 与构建生成 `board-build.json` 交叉核对硬件配置；打包时检查实际镜像芯片、分区范围、OTA 槽容量和烧录偏移。
 
 首次安装 merged 镜像从 `0x0` 刷入，会清空设备配置。full.zip 内含分开的镜像及本目标的 `FLASH.txt`；同分区升级可只刷 app，但分区变化、其他固件迁移均须重新核对。不要混用其他板型的 bootloader 或分区表。
 

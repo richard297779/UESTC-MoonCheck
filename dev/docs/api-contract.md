@@ -20,6 +20,21 @@
 
 ---
 
+## 2026-11-26 网页小组确认
+
+用户当日 HAR 记录从 `/daily-checkin-h5/index.html?appId=294` 开始。它覆盖网页已登录后的列表、提交和复查，门户登录与会话建立沿用仓库的 CAS 和门户预热流程。客户端最终通过 `GET /daily-checkin/api/auth/user-info` 校验当前账号、`SAFETY_OFFICER` 与 `canGroupReport`。
+
+| 步骤 | 请求与回执 |
+| --- | --- |
+| 待确认计数 | `GET /daily-checkin/api/group-situation/safety-officer/pending-confirmation-count`，`data` 为十进制字符串 |
+| 待确认列表 | `GET /daily-checkin/api/group-situation/list?pageIndex=1&pageSize=10&confirmed=false`，记录 ID 为 `data[].record.id`，有效日期为 `data[].record.businessDate` |
+| 批量正常 | `POST /daily-checkin/api/group-situation/report`，JSON 数组元素形如 `{"recordId":"example-record","action":"NORMAL"}`，成功回执为 `code=0`、`ok=true`、`data=true` |
+| 结果复查 | 再读待确认列表和待确认人数，确认本次提交的记录不再待确认。抓包内待确认人数从 4 降到 0 |
+
+业务请求头使用 `Platform: h5` 和网页 Referer。HAR 中该提交请求未带 `X-Checkin-Ticket` 或定位字段。名单分页信息与待确认计数必须一致。代码仅提交符合抓包所见未填报、未确认、无异常状态组合的当天记录，每轮最多读取 20 页。复查尚有待办时返回未完成。HAR 未覆盖异常上报、其他角色、跨组分页或发生并发人工编辑时的平台处理。
+
+下文 EP06–EP10 描述个人定位打卡接口。
+
 ## 0. 元信息
 
 | 项 | 值 |

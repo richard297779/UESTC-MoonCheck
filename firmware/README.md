@@ -55,6 +55,17 @@ pio device monitor --port COM5               # 串口日志，115200
 
 只有一种固件：**打卡几个人由账号表决定**，不需要为了多人重新编译。
 
+## 新版小组确认
+
+升级到包含小组功能的固件后，用仓库中的 BLE 控制台连接设备。
+
+1. 配置本人 CAS 登录和 Wi-Fi。账号表非空时，确保启用的账号都有晚安成电安全员角色。
+2. 输入 `group on`，用 `status` 核对 `cfg.schedule.groupReport` 为 `true`。`group off` 可切回个人模式。
+3. 在打卡窗口用 `login`、`probe` 查询登录和待确认人数。窗口外只读登录检查可用 `login force`。`probe` 回执中的 `groupPendingCount` 是平台当日待确认人数。
+4. 按已有计划运行。小组模式使用设备配置的窗口，不需要定位或微信取票。
+
+有组员联系不上时，请在计划执行前到网页提交异常。需要暂缓时先执行 `auto off`，处理完异常后再按需要恢复。小组模式遇到平台标记异常、已处理或未识别的记录会保留给人工检查，并在复查仍有待办时报告未完成。
+
 ## 3. 微信操作票据与凭据配置
 
 平台已要求打卡请求携带 `X-Checkin-Ticket`。当前源码会在打卡前自动通过微信小程序授权链获取短效票据，不需要手工获取或填写票据本身。账号的 CAS 登录配置（学号、密码、可选浏览器指纹）仍然需要保留。
@@ -75,7 +86,7 @@ wx test 0
 
 ```text
 I main: === WANAN checkin device booting ===
-I main: firmware 0.8.0, built ...
+I main: firmware 0.9.0, built ...
 I logger: logger ready (ring=ok)
 I app_config: config loaded: ready=0 user=unset bfp=0
 I status_led: led ready: pin=48 rgb=1

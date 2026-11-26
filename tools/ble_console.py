@@ -33,6 +33,7 @@
     auth <user> <pass> [bfp]   配置学号 / 密码 / 浏览器指纹
     loc <lat> <lng> [addr]     配置打卡坐标
     sched <at> [end] [jitter]  配置打卡时间，如 sched 22:00 23:30 30
+    group <on|off>             设定安全员小组确认模式（设备级）
     auto <on|off>              开关每日自动打卡
     account list               列出账号表（学号打码，不含密码/指纹；单人 = 只有一条）
     account add <标签> <学号> <密码> [指纹|-] [lat lng [地址…]]
@@ -429,6 +430,11 @@ class Console:
                 if len(args) >= 3:
                     payload["jitter_s"] = int(args[2])
                 await self.send(payload)
+        elif command == "group":
+            if len(args) != 1 or args[0] not in ("on", "off"):
+                print("  用法：group <on|off>")
+            else:
+                await self.send({"op": "group.mode", "enabled": args[0] == "on"})
         elif command == "auto":
             await self.send({"op": "auto.set", "enabled": (args[0] != "off") if args else True})
         elif command == "name":

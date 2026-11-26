@@ -49,6 +49,11 @@ struct LocationInfo {
   int radiusMeter = 0;
 };
 
+struct GroupPendingRecord {
+  String id;
+  bool allowNormal = false;
+};
+
 class CheckinApi {
  public:
   /// @brief 注入 HTTP 客户端。
@@ -76,6 +81,12 @@ class CheckinApi {
 
   /// @brief EP06：查询今日状态。
   Result fetchToday(TodayStatus& out);
+
+  /// @brief 校验网页会话属于当前安全员账号。
+  Result authorizeGroupReport(const String& owner);
+  Result fetchGroupPendingCount(unsigned& count);
+  Result fetchGroupPending(const String& date, std::vector<GroupPendingRecord>& records);
+  Result submitGroupNormal(const std::vector<GroupPendingRecord>& records);
 
   /// @brief EP07：查询有效时段。
   Result fetchSchedule(ScheduleInfo& out);
@@ -135,13 +146,13 @@ class CheckinApi {
 
  private:
   /// @brief 为请求追加微应用必需的请求头。
-  void addH5Headers(HttpRequest& request);
+  void addH5Headers(HttpRequest& request, bool includeTicket = true);
   /// 当前票据；enterApp 仅清除过期票据（集中流程要求 21:00 取号、21:20 使用）。
   String m_operationTicket;
   String m_ticketOwner;
   uint32_t m_ticketAtMs = 0;
   /// @brief GET 一个业务接口并校验 HTTP 状态。
-  Result getJson(const String& path, HttpResponse& response);
+  Result getJson(const String& path, HttpResponse& response, bool includeTicket = true);
 
   HttpClient* m_http = nullptr;
 };

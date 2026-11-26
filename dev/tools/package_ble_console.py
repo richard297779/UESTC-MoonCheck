@@ -45,7 +45,8 @@ def build_archive(output, version, source_commit, source_dirty, repository='rich
 依赖通过 pip 安装，ZIP 不含 Python、第三方库、密钥或本机配置。
 
 使用指南：https://github.com/{repository}/blob/v{version}/docs/ble-gui.md
-源码及逐文件摘要见 manifest.json。用户已确认基本功能；未提供逐设备兼容矩阵。
+源码及逐文件摘要见 manifest.json。
+在命令行模式输入 group on 开启新版小组确认，使用 probe 检查安全员会话和待确认人数。
 '''.encode('utf-8')
     manifest = dict(version=version, component='ble-console-source',
                     firmwareCompatibility=f'{version} / protocol 1',

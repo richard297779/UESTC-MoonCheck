@@ -546,6 +546,10 @@ class App(object):
         self.sched_end = tk.StringVar()
         self._label_entry_row(parent, 1, '开始 (HH:MM)', self.sched_at)
         self._label_entry_row(parent, 2, '截止 (HH:MM)', self.sched_end)
+        self.group_report = tk.BooleanVar(value=False)
+        ttk.Checkbutton(parent, text='安全员小组确认（适用于所有启用账号）',
+                        variable=self.group_report).grid(
+            row=5, column=0, columnspan=2, sticky='w', **_ROW_PAD)
         self.sched_hint = ttk.Label(parent, text='', foreground='#555')
         self.sched_hint.grid(row=3, column=0, columnspan=2, sticky='w', padx=8, pady=8)
         ttk.Label(parent, text='提示：固件端 21:00 预登录是设备行为；桌面端直接按窗口执行，\n'
@@ -607,6 +611,7 @@ class App(object):
         sched = cfg.get('schedule') or {}
         self.sched_at.set(sched.get('checkin_at') or '22:00')
         self.sched_end.set(sched.get('window_end') or '23:30')
+        self.group_report.set(config.group_report_enabled(cfg))
         self._refresh_acct_list()
         labels = [a['label'] for a in config.effective_accounts(self.work,only_enabled=False)]
         self.wx_picker['values'] = labels
@@ -642,7 +647,7 @@ class App(object):
         if url:
             notify['url'] = url
         notify['style'] = int(self.notify_style.get().split(' ')[0])
-        sched = cfg.setdefault('schedule', {})
+        cfg.setdefault('schedule', {})['group_report'] = self.group_report.get()
         for key, var in (('checkin_at', self.sched_at), ('window_end', self.sched_end)):
             text = var.get().strip()
             if text:

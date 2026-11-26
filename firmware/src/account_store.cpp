@@ -69,6 +69,7 @@ Result AccountStore::begin(const char* nvsNamespace) {
       profile.address = item["a"] | "";
       profile.lastDate = item["d"] | "";
       profile.lastOk = item["ok"] | false;
+      profile.lastGroupReport = item["group"] | false;
       profile.lastMsg = item["m"] | "";
       if (profile.label.length() > 0 && profile.studentId.length() > 0) {
         m_list.push_back(profile);
@@ -95,6 +96,7 @@ Result AccountStore::persist() {
     item["a"] = profile.address;
     item["d"] = profile.lastDate;
     item["ok"] = profile.lastOk;
+    item["group"] = profile.lastGroupReport;
     item["m"] = profile.lastMsg;
   }
   String serialized;
@@ -141,10 +143,12 @@ Result AccountStore::addOrUpdate(const CheckinProfile& profile) {
     const bool sameIdentity=target.studentId==profile.studentId;
     const String lastDate = sameIdentity?target.lastDate:String();
     const bool lastOk = sameIdentity&&target.lastOk;
+    const bool lastGroupReport = sameIdentity && target.lastGroupReport;
     const String lastMsg = sameIdentity?target.lastMsg:String();
     target = profile;
     target.lastDate = lastDate;
     target.lastOk = lastOk;
+    target.lastGroupReport = lastGroupReport;
     target.lastMsg = lastMsg;
   } else {
     if (m_list.size() >= kMaxProfiles) {
@@ -216,7 +220,7 @@ Result AccountStore::clearAll() {
 }
 
 Result AccountStore::setResult(const String& label, const String& date, bool success,
-                               const String& message) {
+                               const String& message, bool groupReport) {
   if (m_mutex) xSemaphoreTake(m_mutex, portMAX_DELAY);
   Result result = Result::NotFound;
   const int index = indexOfLabel(label);
@@ -224,6 +228,7 @@ Result AccountStore::setResult(const String& label, const String& date, bool suc
     CheckinProfile& profile = m_list[static_cast<size_t>(index)];
     profile.lastDate = date;
     profile.lastOk = success;
+    profile.lastGroupReport = groupReport;
     profile.lastMsg = message;
     result = persist();
   }
@@ -232,11 +237,11 @@ Result AccountStore::setResult(const String& label, const String& date, bool suc
   return result;
 }
 
-bool AccountStore::isCheckedInToday(const String& label, const String& date) const {
+bool AccountStore::isCheckedInToday(const String& label, const String& date, bool groupReport) const {
   if (date.length() == 0) return false;
   for (const CheckinProfile& profile : m_list) {
     if (profile.label == label) {
-      return profile.lastOk && profile.lastDate == date;
+      return profile.lastOk && profile.lastDate == date && profile.lastGroupReport == groupReport;
     }
   }
   return false;

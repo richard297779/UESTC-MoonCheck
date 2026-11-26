@@ -163,6 +163,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `loc.set` | `lat,lng[,addr]` | 写打卡坐标 | 否 |
 | `sched.set` | `at,window_end[,jitter_s,window_start]` | 写打卡时间与窗口（默认 22:00 / 21:00–23:30） | 否 |
 | `auto.set` | `enabled` | 开关每日自动打卡 | 否 |
+| `group.mode` | `enabled` 布尔值 | 设备级小组确认开关，持久化到 NVS。默认关闭，状态见 `cfg.schedule.groupReport`。适用于所有启用账号 | 否 |
 | `notify.set` | `url,style,on,gap,quota` | 配置手机通知通道（`style` 0=GET 模板 1=POST 文本 2=POST JSON）；`url` 含 token，回执只输出脱敏形式。详见 `docs/notify-design.md` | 否 |
 | `notify.status` | — | 通知开关 / 格式 / 脱敏 URL / 今日已发 / 队列长度 / 重试轮次 | 否 |
 | `test.notify` | `body?` | **立即真发一条**（不入队、不受去重与配额限制），用来验证通道 | 是 |
@@ -182,7 +183,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `test.http` | `url` | 访问任意 URL：状态码 / 字节数 / 耗时 / 是否命中关键字 | 是 |
 | `test.login` | `force?` | 登录链路测试；**默认只在窗口内登录**（会话 TTL≈1 h 且打卡只接受窗口内，窗口外登录会白烧一次登录次数），`force=true` 才强制。授权本身与窗口无关，靠门户预热 `GET /api/isLoginFailure`（`docs/api-contract.md` §8.7） | 是 |
 | `test.chain` | `wait_s?,force?` | **全链路自检**：网络/校时 → 登录页 → 登录 → **进入微应用** → 业务接口；`wait_s` 秒内每 30 s 重探放行（≤900） | 是 |
-| `test.probe` | — | 前置体检（会话 / 今日状态 / 平台时段 / 打卡点），只读 | 是 |
+| `test.probe` | — | 只读体检。个人模式查状态与打卡窗口，小组模式查安全员会话与 `groupPendingCount` | 是 |
 | `test.checkin` | `force?` | 打卡测试；`force` 仅跳过"今日已打卡"检查，**仍需在窗口内** | 是 |
 | `test.time` | — | 设备时间 / 窗口配置 / 是否在窗口内 / 下次计划 | 否 |
 

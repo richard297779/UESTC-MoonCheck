@@ -29,6 +29,7 @@ struct CheckinProfile {
   String address;
   String lastDate;          ///< 最近一次打卡结果所属日期
   bool lastOk = false;
+  bool lastGroupReport = false;
   String lastMsg;
 
   bool hasFingerprint() const { return fingerprint.length() > 0; }
@@ -64,9 +65,10 @@ class AccountStore {
   Result clearAll();
 
   /// @brief 记录某个账号本次的打卡结果（用于幂等与 status 展示）。
-  Result setResult(const String& label, const String& date, bool success, const String& message);
+  Result setResult(const String& label, const String& date, bool success, const String& message,
+                   bool groupReport);
   /// @brief 该账号在指定日期是否已确认成功。
-  bool isCheckedInToday(const String& label, const String& date) const;
+  bool isCheckedInToday(const String& label, const String& date, bool groupReport) const;
 
   /// @brief 脱敏摘要（不含密码/指纹值；学号只留前 4 位）——用于 BLE 回执。
   String toJsonSummary() const;

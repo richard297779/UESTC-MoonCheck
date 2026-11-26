@@ -1,8 +1,16 @@
-# MoonCheck Desktop 1.1.0
+# MoonCheck Desktop 1.2.0
 
 Windows / Linux 原生桌面程序，CLI 与 tkinter 图形界面共用业务逻辑。电脑独立执行 CAS 登录、门户预热、微信授权刷新、MMTLS 获取小程序 code、平台取票、提交与结果复查，**无需 ESP32**。
 
-1.1.0 已完成代码移植、离线回归及 Windows 打包；尚未用真实桌面账号验证取票/打卡，不能沿用固件或 APK 的实测结论。固件和 Android 当前为独立的 0.8.0；本目录程序仍保持 1.1.0，不因 BLE 控制台更新而换标。电脑端以 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 独立提供 Windows ZIP及当时的旧 BLE 源码包；最新 BLE 界面请从 [v0.8.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载。桌面 1.0.0 不支持平台微信票据要求，请升级。
+当前 Windows 本地验证版为 1.2.0，新增安全员小组确认。桌面真实账号联调有待验证。已发布的 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供旧版 Windows ZIP。固件、APK 和 BLE 控制台使用仓库根目录的独立版本。
+
+## 新版小组确认
+
+使用当前桌面源码运行程序，在“打卡时间”页勾选“安全员小组确认”并保存。命令行可以执行 `MoonCheck config set schedule.group_report true`。从源码运行时，将 `MoonCheck` 替换为 `python desktop/mooncheck.py`。
+
+仅需配置校园网访问和本人 CAS 登录信息。开关适用于所有启用的账号，每个账号均须有安全员小组上报权限。用 `status` 读取待确认人数，`checkin --dry-run` 可以离线查看请求类型。原有 `auto` 任务在配置的窗口内执行批量确认。
+
+有组员联系不上时，请在计划执行前到网页提交异常，或暂停这次计划运行。程序会跳过平台已标记异常、已处理或未识别的记录，并提示剩余待办。此前发布的桌面安装包需要用新源码重新构建才包含该模式。
 
 ## 使用前准备
 
@@ -90,6 +98,6 @@ python mooncheck.py                     # 图形界面
 
 也可使用现有 `build_windows.bat`（conda 环境需预装 requirements-build.txt）。Linux 在目标 Linux/WSL 环境执行 `bash build_linux.sh`，PyInstaller 不交叉编译；Linux 二进制本次未构建/实测。
 
-Windows 产物 `dist/windows/MoonCheck.exe`；分享包 `dist/packages/MoonCheck-Desktop-1.1.0-windows.zip`、manifest 和 SHA-256 由构建脚本自动生成。也可在构建环境单独执行 `python package_local.py` 重新核验与打包。单文件程序内含加密依赖，使用者不用安装 Python。新构建不会混入历史固件发行包，也不会自动推送 GitHub。
+Windows 产物 `dist/windows/MoonCheck.exe`；分享包 `dist/packages/MoonCheck-Desktop-1.2.0-windows.zip`、manifest 和 SHA-256 由构建脚本自动生成。也可在构建环境单独执行 `python package_local.py` 重新核验与打包。单文件程序内含加密依赖，使用者不用安装 Python。新构建不会混入历史固件发行包，也不会自动推送 GitHub。
 
 文档：[移植计划](../dev/docs/desktop-port-plan.md) · [架构](../dev/docs/desktop-app.md) · [验证记录](docs/verification.md) · [第三方声明](THIRD_PARTY.md)

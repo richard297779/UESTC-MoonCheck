@@ -99,7 +99,7 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
     // 表为空时没有 per-account 记录，退回设备级 last 结果（同一天同源）。
     const bool alreadyDone =
         !force && !probeOnly &&
-        (fromStore ? m_accounts->isCheckedInToday(profile.label, today)
+        (fromStore ? m_accounts->isCheckedInToday(profile.label, today, m_config->groupReportEnabled())
                    : m_config->isLastResultOkFor(today));
     if (alreadyDone) {
       result.okCount++;
@@ -159,7 +159,9 @@ MultiCheckin::RunResult MultiCheckin::runAll(bool force, bool probeOnly) {
     if (ok) result.okCount++;
 
     if (!probeOnly && (ok || outcome == CheckinOutcome::Failed)) {
-      if (fromStore) m_accounts->setResult(profile.label, today, ok, message);
+      if (fromStore) {
+        m_accounts->setResult(profile.label, today, ok, message, m_config->groupReportEnabled());
+      }
     }
 
     JsonObject item = array.add<JsonObject>();

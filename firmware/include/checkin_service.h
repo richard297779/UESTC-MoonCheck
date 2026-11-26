@@ -26,6 +26,7 @@ struct ProbeReport {
   bool h5PageReached = false;       ///< 打卡界面（静态 H5 页）本身是否可打开：与授权无关，恒应为 true
   bool loginAllowed = false;        ///< 当前是否处于"登录才有意义"的时段（窗口外登录不被授权）
   bool inWindow = false;            ///< 当前是否在打卡时段内
+  unsigned groupPendingCount = 0;
   bool windowFromPlatform = false;  ///< 时段是否来自平台（否则用本地配置）
   String deviceTime;                ///< 设备本地时间
   String windowText;                ///< 形如 "21:00 - 23:30"
@@ -91,6 +92,9 @@ class CheckinService {
   static const char* outcomeName(CheckinOutcome outcome);
 
  private:
+  Result probeGroup(unsigned& pendingCount);
+  CheckinOutcome performGroup(const ProbeReport& report, String& outMessage);
+
   WxTicketProvider m_wxTicket;
   AppConfig* m_config = nullptr;
   CasAuth* m_auth = nullptr;

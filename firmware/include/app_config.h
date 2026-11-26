@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
+#include <atomic>
 #include <vector>
 
 #include "app_types.h"
@@ -40,6 +41,7 @@ class AppConfig {
   const AuthConfig& auth() const { return m_auth; }
   const LocationConfig& location() const { return m_location; }
   const ScheduleConfig& schedule() const { return m_schedule; }
+  bool groupReportEnabled() const { return m_groupReport.load(); }
 
   /// @brief 自定义设备标签（可为空 = 用蓝牙 MAC 尾号）。
   const String& deviceLabel() const { return m_deviceLabel; }
@@ -60,6 +62,7 @@ class AppConfig {
                      const String& windowStart = "");
   /// @brief 开关每日自动打卡。
   Result setAutoDaily(bool enabled);
+  Result setGroupReport(bool enabled);
 
   /// @brief 重新从 NVS 载入配置（丢弃 applyProfile() 的运行期覆盖）。
   Result reload();
@@ -164,6 +167,7 @@ class AppConfig {
   AuthConfig m_auth;
   LocationConfig m_location;
   ScheduleConfig m_schedule;
+  std::atomic<bool> m_groupReport{false};
   String m_deviceLabel;   ///< 自定义 BLE 名标签（空=用 MAC 尾号）
   String m_activeLabel = "device";  ///< 当前内存配置对应的账号标签（运行期，不落盘）
   uint16_t m_multiGapSeconds = 20;  ///< 账号之间的间隔秒数

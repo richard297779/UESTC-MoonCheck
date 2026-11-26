@@ -9,7 +9,7 @@
 | `firmware/` | C++17、PlatformIO、Arduino-ESP32 2.0.17、FreeRTOS；ESP32 网络、调度、账号、BLE 与通知 |
 | `android/` | Kotlin 2.1.20、Jetpack Compose Material 3、协程、kotlinx.serialization；原生 BLE 控制端 |
 | `tools/` | Python 用户工具；`ble_console.py` 使用 bleak，`check_project.py` 执行仓库与发行包检查 |
-| `desktop/` | Python 3.10+、tkinter、标准库 HTTP、CAS AES、PyCryptodome；独立版本 1.1.0 的微信取票桌面程序 |
+| `desktop/` | Python 3.10+、tkinter、标准库 HTTP、CAS AES、PyCryptodome；独立版本 1.2.0 的打卡桌面程序 |
 | `docs/` | 用户指南 |
 | `dev/docs/`、`dev/tools/` | 协议、开发设计、验证方案与开发辅助工具 |
 | `release/` | 按 `vX.Y.Z/` 保存发行产物，根目录 README 为索引；`.staging/` 单独保存打包暂存 |
@@ -88,7 +88,7 @@ python tools/check_project.py --release-dir release/v<版本号>
 
 ## v0.8.0 补充约定
 
-- 固件 / APK / 电脑 BLE 源码跟随根 VERSION；独立打卡桌面程序继续独立版本。当前 Android versionCode 为 800。
+- 固件 / APK / 电脑 BLE 源码跟随根 VERSION；独立打卡桌面程序继续独立版本。当前 Android versionCode 为 900。
 - account.snapshot 返回完整学号，仅用户界面可显示；诊断仍脱敏。account.patch 只发送非空字段，客户端携 expectedRevision，微信导入同时核对 label / slot；账号删改后不得重用旧映射。
 - 指定账号执行依赖 selected-execution，不得临时修改全局启用开关模拟选择；每人隔离会话、票据、位置，外层成功不能代替逐账号业务成功。
 - 修改账号合并、目标或微信槽位逻辑，运行 `python tools/test_account_patch.py --compiler c++`，或用 --zig；该测试直接编译生产头文件。预取票据也必须使用当前账号归属。

@@ -88,8 +88,9 @@ void TaskScheduler::poll() {
 
   // ---- 集中流程（2026-10-24 用户设定）----
   // 窗口起点（21:00）：预取微信操作票据（取号，约 10 s，票据 ~30 min 有效）
-  if (windowStartSeconds > 0 && secondsOfDay >= windowStartSeconds &&
-      secondsOfDay < checkinSeconds && m_lastPrefetchDate != today) {
+  if (!m_config->groupReportEnabled() && windowStartSeconds > 0 &&
+      secondsOfDay >= windowStartSeconds && secondsOfDay < checkinSeconds &&
+      m_lastPrefetchDate != today) {
     m_lastPrefetchDate = today;
     LOG_I(kTag, "trigger wx ticket prefetch (window start)");
     m_sink(Trigger::WxPrefetch);
@@ -112,7 +113,7 @@ void TaskScheduler::poll() {
   if (secondsOfDay >= checkinSeconds && secondsOfDay < windowEndSeconds) {
     // 已确认成功则不再重试；状态变化时只记一次日志
     // （历史问题：这里原为每秒一行，既刷屏又会冲掉 128 行的日志环形缓冲）
-    if (m_confirmedDate == today || m_config->isLastResultOkFor(today)) {
+    if (m_config->isLastResultOkFor(today)) {
       if (m_confirmedDate != today) {
         m_confirmedDate = today;
         LOG_I(kTag, "today check-in already confirmed, no retry needed");

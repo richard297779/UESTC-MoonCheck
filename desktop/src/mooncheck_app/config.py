@@ -78,6 +78,7 @@ DEFAULTS = {
     'schedule': {
         'checkin_at': '22:00',
         'window_end': '23:30',
+        'group_report': False,
     },
     'accounts': [],
     'notify': {
@@ -106,6 +107,7 @@ EDITABLE = {
     'location.network_type': '网络类型（载荷字段，如 4g/wifi）',
     'schedule.checkin_at': '打卡开始时间 HH:MM（默认 22:00）',
     'schedule.window_end': '打卡截止时间 HH:MM（默认 23:30）',
+    'schedule.group_report': '安全员网页小组确认（true/false，适用于所有启用账号）',
     'notify.on': '推送开关（true/false）',
     'notify.url': '默认推送地址（Server酱 https://sctapi.ftqq.com/<SENDKEY>.send）',
     'notify.style': '推送方式 0=GET 模板 1=POST 文本 2=POST JSON',
@@ -365,6 +367,10 @@ def channel_matches(channel, account_label):
     return account_label in accounts
 
 
+def group_report_enabled(cfg):
+    return (cfg.get('schedule') or {}).get('group_report') is True
+
+
 def in_window(cfg, now=None):
     """当前时间是否落在打卡窗口 [checkin_at, window_end]（跨午夜按不跨处理：
     打卡场景 22:00–23:30 不跨天）。"""
@@ -448,10 +454,13 @@ def validate(cfg):
             out.append(('warn', where,
                         '仍是示例坐标（打卡点中心）。换成你自己宿舍的实测坐标更稳妥'))
 
-    check_loc('location', cfg.get('location') or {})
-    for a in accounts:
-        if isinstance(a.get('location'), dict):
-            check_loc('%s.location' % (a.get('label') or '?'), a['location'])
+    if not group_report_enabled(cfg):
+        check_loc('location', cfg.get('location') or {})
+        for a in accounts:
+            if isinstance(a.get('location'), dict):
+                check_loc('%s.location' % (a.get('label') or '?'), a['location'])
+    if type((cfg.get('schedule') or {}).get('group_report', False)) is not bool:
+        out.append(('error', 'schedule.group_report', '小组确认开关必须为布尔值'))
 
     timeout = get(cfg, 'timeout')
     if not isinstance(timeout, int) or timeout < 3 or timeout > 120:
