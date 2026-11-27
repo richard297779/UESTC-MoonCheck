@@ -41,6 +41,8 @@ class FixturePortal:
         self.fail_submit = False
         self.keep_pending = False
         self.inconsistent_count = False
+        self.identity_error = None
+        self.count_error = None
 
     def follow(self, url, headers):
         if '/daily-checkin/checkLogin?' not in url:
@@ -56,10 +58,16 @@ class FixturePortal:
         if path == '/api/isLoginFailure':
             return Resp(200, {}, b'', url)
         if path.endswith('/auth/user-info'):
-            result['data'] = {'userData': {'username': self.owner, 'userType': self.role,
-                                           'invalid': False, 'canGroupReport': True}}
+            if self.identity_error is not None:
+                result = self.identity_error
+            else:
+                result['data'] = {'userData': {'username': self.owner, 'userType': self.role,
+                                               'invalid': False, 'canGroupReport': True}}
         elif path.endswith('/pending-confirmation-count'):
-            result['data'] = str(len(self.rows) + int(self.inconsistent_count))
+            if self.count_error is not None:
+                result = self.count_error
+            else:
+                result['data'] = str(len(self.rows) + int(self.inconsistent_count))
         elif path.endswith('/group-situation/list'):
             args = parse_qs(urlsplit(url).query)
             page = int(args['pageIndex'][0])
@@ -100,6 +108,38 @@ class GroupReportTests(unittest.TestCase):
             if saved.called:
                 self.assertEqual(result.kind == 'ok', saved.call_args.args[3])
             return result
+
+    def test_identity_5000_with_login_message_reestablishes_session_once(self):
+        expired = FixturePortal([])
+        expired.identity_error = dict(code=5000, ok=False, data=None, msg='系统异常：用户未登录')
+        verified = FixturePortal([pending_row(1)])
+        for after_login, expected_ok in ((verified, True), (expired, False)):
+            with self.subTest(expected_ok=expected_ok), \
+                 patch.object(service, 'build_client', return_value=expired), \
+                 patch.object(service, '_login_chain', return_value=(after_login, '')) as login:
+                result = service.do_status(self.cfg, lambda _msg: None)
+                self.assertEqual(result.ok, expected_ok)
+                if expected_ok:
+                    self.assertEqual(result.data, {'pending_count': 1})
+                login.assert_called_once()
+            self.assertEqual(after_login.posts, [])
+
+    def test_other_5000_errors_do_not_trigger_login(self):
+        expired = dict(code=5000, ok=False, data=None, msg='系统异常：用户未登录')
+        for field, error in (
+            ('identity_error', dict(expired, msg='系统异常')),
+            ('identity_error', {key: value for key, value in expired.items() if key != 'data'}),
+            ('count_error', expired),
+        ):
+            with self.subTest(field=field, error=error):
+                portal = FixturePortal([])
+                setattr(portal, field, error)
+                with patch.object(service, 'build_client', return_value=portal), \
+                     patch.object(service, '_login_chain') as login:
+                    result = service.do_status(self.cfg, lambda _msg: None)
+                self.assertFalse(result.ok)
+                login.assert_not_called()
+                self.assertEqual(portal.posts, [])
 
     def test_scheduled_batch_success_and_rerun_reads_without_posting(self):
         portal = FixturePortal([pending_row(1), pending_row(2)])

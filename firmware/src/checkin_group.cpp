@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 
 #include <algorithm>
+#include <cstring>
 
 namespace {
 
@@ -11,7 +12,7 @@ constexpr unsigned kPageSize = 10;
 constexpr unsigned kMaxPages = 20;
 
 Result parseResponse(const HttpResponse& response, JsonDocument& doc,
-                     const JsonDocument& filter) {
+                     const JsonDocument& filter, bool isIdentityResponse = false) {
   if (response.status == 301 || response.status == 302 || response.status == 303 ||
       response.status == 307 || response.status == 308 || response.status == 401) {
     return Result::SessionInvalid;
@@ -22,6 +23,14 @@ Result parseResponse(const HttpResponse& response, JsonDocument& doc,
   }
   const JsonVariantConst code = doc["code"];
   if (code == 4001 || code == "4001") return Result::SessionInvalid;
+  if (isIdentityResponse && code.is<int>() && code.as<int>() == 5000) {
+    const JsonVariantConst ok = doc["ok"];
+    const JsonVariantConst data = doc["data"];
+    const char* message = doc["msg"].as<const char*>();
+    // The identity endpoint may use the generic 5000 code for an expired portal session.
+    if (ok.is<bool>() && !ok.as<bool>() && !data.isUnbound() && data.isNull() &&
+        message && std::strstr(message, "未登录")) return Result::SessionInvalid;
+  }
   if (!code.is<int>() || code.as<int>() != 0 || !doc["ok"].is<bool>() ||
       !doc["ok"].as<bool>()) {
     return Result::ApiChanged;
@@ -79,12 +88,13 @@ Result CheckinApi::authorizeGroupReport(const String& owner) {
   JsonDocument filter;
   filter["code"] = true;
   filter["ok"] = true;
+  filter["msg"] = true;
   JsonObject userFilter = filter["data"]["userData"].to<JsonObject>();
   for (const char* field : {"username", "userType", "invalid", "canGroupReport"}) {
     userFilter[field] = true;
   }
   JsonDocument doc;
-  const Result result = parseResponse(response, doc, filter);
+  const Result result = parseResponse(response, doc, filter, true);
   if (result != Result::Ok) return result;
   const JsonObjectConst user = doc["data"]["userData"];
   if (user.isNull()) return Result::ApiChanged;

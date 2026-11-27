@@ -18,7 +18,7 @@ class GroupReportError(Exception):
         self.session_expired = session_expired
 
 
-def _response_json(response):
+def _response_json(response, *, is_identity_response=False):
     if response.status in (301, 302, 303, 307, 308, 401):
         raise GroupReportError('小组上报会话已失效', session_expired=True)
     if response.status != 200:
@@ -31,6 +31,10 @@ def _response_json(response):
         raise GroupReportError('小组接口响应格式无效')
     code = data.get('code')
     if code in (4001, '4001'):
+        raise GroupReportError('小组上报会话已失效', session_expired=True)
+    message = data.get('msg')
+    if (is_identity_response and type(code) is int and code == 5000 and data.get('ok') is False
+            and 'data' in data and data['data'] is None and isinstance(message, str) and '未登录' in message):
         raise GroupReportError('小组上报会话已失效', session_expired=True)
     if type(code) is not int or code != 0 or data.get('ok') is not True:
         raise GroupReportError('平台拒绝小组上报请求')
@@ -56,8 +60,9 @@ class GroupReport:
         self.api = api
         self.owner = owner
 
-    def _get(self, url):
-        return _response_json(self.api.client.request('GET', url, headers=self.api.h5_headers))
+    def _get(self, url, *, is_identity_response=False):
+        response = self.api.client.request('GET', url, headers=self.api.h5_headers)
+        return _response_json(response, is_identity_response=is_identity_response)
 
     def probe(self):
         """校验网页会话归属与小组上报角色，返回脱敏的待确认人数。"""
@@ -67,7 +72,7 @@ class GroupReport:
             response = self.api.client.request('GET', self.api.h5_url, headers={'Accept': 'text/html'})
             if response.status != 200:
                 raise GroupReportError('当前会话未进入晚安成电网页', session_expired=True)
-        envelope = self._get(API + '/auth/user-info').get('data')
+        envelope = self._get(API + '/auth/user-info', is_identity_response=True).get('data')
         user = envelope.get('userData') if isinstance(envelope, dict) else None
         if not isinstance(user, dict):
             raise GroupReportError('小组上报身份响应格式无效')
