@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `firmware/` | PlatformIO 环境、板型目录、源码、分区和构建脚本 | `.pio/` 由 PlatformIO 管理 |
 | `android/` | Gradle/Compose 工程、测试和模块文档 | `.build-tools/`、`.gradle/`、`.gradle-home/`、`.kotlin/`、各级 `build/`；保持原路径 |
-| `desktop/` | 历史桌面程序源码、示例配置和打包脚本 | `config.json`、`runtime/`、`logs/`、`_tmp/`、`build/`、`dist/`；可能含凭据或运行数据，不纳入归档 |
+| `desktop/` | 独立桌面程序源码、示例配置和打包脚本 | `config.json`、`runtime/`、`logs/`、`_tmp/`、`build/`、`dist/`；可能含凭据或运行数据，不纳入归档 |
 | `tools/` | 面向用户的 BLE、板型和检查工具；`tests/` 为离线回归 | `__pycache__/` 不提交 |
 | `dev/tools/` | 开发、诊断和参考实现 | 参考实现本机配置与输出继续忽略 |
 | `docs/` | 用户使用、刷写、板型支持与项目验证记录 | 不放编译缓存或真实账号日志 |
@@ -25,6 +25,6 @@ v0.6.0/v0.7.0 的 `.stage` 历史中间目录移到 `release/.staging/v0.6.0/` �
 
 - 新文件按已有模块职责归位。不要在根目录新增临时报告、构建日志或带版本号的散装二进制。
 - 更新文档、脚本中的路径后运行 `python tools/check_project.py` 与 `git diff --check`。
-- 仅目录和文档调整无需重建固件/APK；当前包用 `python tools/check_project.py --release-dir release/v0.8.0` 检查；历史包只能与对应源码 / 清单核对，不应因目录调整重新打包覆盖原资产。
+- 仅目录和文档调整无需重建固件/APK；当前包用 `python tools/check_project.py --release-dir release/v0.9.0 --require-clean` 检查；历史包只能与对应源码 / 清单核对，不应因目录调整重新打包覆盖原资产。
 - 历史已跟踪资产迁移后须检查新路径未被忽略；新增输出继续忽略。提交时核对删除/新增配对，Git 会按内容识别重命名。
 - 需要清理 SDK、缓存、历史构建或运行数据时另行明确范围；本次整理不删除、不移动可能含秘密的运行配置，也不修改 GitHub 发行。

@@ -28,11 +28,9 @@ python tools/ble_console.py --name WANAN-XXXX
 
 ```text
 wifi Dorm-2.4G mywifi123
-auth 2023XXXXXXX mypassword 0123456789ABCDEF0123456789ABCDEF
-wx import 0 <openid Cookie> <accesstoken Cookie> <refreshtoken Cookie> 0
-loc 30.753456 103.934123 四川省成都市郫都区
+account list
+account new <学号> <32位浏览器指纹>
 sched 22:00 23:30 30
-auto on
 ```
 
 > WiFi 名或密码含空格时，短命令会被拆错，改用原始指令：
@@ -45,7 +43,10 @@ auto on
 | `account list` / `group status` | 查看每个账户的模式与完整学号 |
 | `account new <学号> <指纹> [personal]` | 新建账户，交互输入密码，默认小组模式 |
 | `group on <账号>` / `group off <账号>` | 为指定账户开启小组确认或切回个人定位 |
-| `login` / `probe` | 小组模式下检查安全员会话与待确认人数 |
+| `login` / `login force` | 检查安全员会话和待确认人数。`force` 允许窗口外登录 |
+| `probe` | 使用当前会话查询状态 |
+
+登录和体检均为只读检查打卡状态。小组身份接口明确返回「未登录」时，固件按窗口策略决定是否重新登录。
 
 新固件将模式写入目标账户的 `groupReport` 布尔字段。同一设备可以同时保存小组和个人定位账户。旧固件的全局模式继续由 `cfg.schedule.groupReport` 表示。只有成功读取小组状态时才返回 `groupPendingCount`。
 
@@ -149,7 +150,7 @@ wx test 0
 
 | 命令 | 说明 |
 | --- | --- |
-| `account add <标签> <学号> <密码> [指纹]` | 添加账号，标签如 `A01`，最多 6 个 |
+| `account add <标签> <学号> <密码> <32位指纹>` | 旧版覆盖入口。新建使用 `account new`，设备自动分配标签，最多 6 个 |
 | `account list` | 列出所有账号及开关状态 |
 | `account on <标签>` / `account off <标签>` | 单独启用 / 暂停某账号 |
 | `account rm <标签>` | 删除 |
@@ -172,7 +173,7 @@ wx test 0
 | `notify test [chan=<标签>] [文本]` | 立即发送一条测试消息（不入队；默认走默认通道） |
 | `notify` | 列出所有通道与今日已发数 |
 
-`style`：`0` = GET 模板（Bark）、`1` = 纯文本（ntfy）、`2` = JSON（Server酱 / 中转）。
+`style` 为 `0` 时发送 GET 模板（Bark、Qmsg），`1` 时发送纯文本（ntfy），`2` 时发送 JSON（Server酱或中转）。
 
 多人模式下：逐账号结果推给**关联该账号**的通道，整轮汇总只走默认通道。
 详见 **[手机通知](notify.md)**。

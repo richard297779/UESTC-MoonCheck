@@ -1,8 +1,10 @@
 # v0.9.0 本地验证版
 
-固件、Android 和 BLE 控制台源码版本均为 0.9.0，Android versionCode 为 900。独立 Windows 桌面版为 1.2.0。新版小组确认等待真实账号和板卡验证。
+固件、Android 和 BLE 控制台源码版本均为 0.9.0，Android versionCode 为 900。独立 Windows 桌面版为 1.2.0。本机真实账号已验证小组登录和只读计数。实板 BLE 联调与真实打卡提交待验证。
 
 构建顺序沿用下文。本地验证包使用 `make_release.ps1 -NoUpload -IncludeExperimental`，并用 `tools/check_project.py --release-dir release/v0.9.0 --require-clean` 核对清单与提交。桌面按独立发行流程生成 `desktop/dist/release/desktop-v1.2.0/`。
+
+以下发行步骤记录 v0.8.0 及更早版本。作为新版本参考时使用当前版本号、板型配置和本轮验证范围。
 
 ## v0.8.0 已发布版本记录
 

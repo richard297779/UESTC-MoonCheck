@@ -1,4 +1,6 @@
-# PC 端 Python 参考实现与测试流程设计
+# PC 端 Python 参考实现与测试流程设计（历史）
+
+> 以下是早期个人定位实验。当前模式和登录语义见[接口契约](api-contract.md)与[桌面说明](../../desktop/README.md)。
 
 > 配套文档：`docs/capture-guide.md`（抓包）、`docs/api-contract.md`（契约）。
 > 本文回答一个问题：**在给 ESP32 写第一行代码之前，如何用 PC 上的 Python 把整条链路验证透彻。**
@@ -264,7 +266,7 @@ py cli.py launch-url --repeat          # 用同一地址连续请求两次，判
 # 3) 纯 HTTP 全自动（T3）
 py cli.py login                        # 需要验证码时：等待输入 code
 py cli.py login --code 123456          # 或直接传参（便于脚本化）
-py cli.py prelogin                     # 模拟固件窗口起点 21:00 预登录（每天只跑一次登录链；窗口外登录永不被平台授权）
+py cli.py prelogin                     # 模拟固件窗口起点 21:00 预登录（模拟当时的本地调度策略）
 py cli.py auto                         # 登录 + （必要时）打卡 + 确认，一条龙
 
 # 4) 判决实验（T4 / T4b）

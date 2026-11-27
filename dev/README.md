@@ -28,7 +28,7 @@ mooncheck/
 └─ release/             发布产物与发行说明
 ```
 
-桌面 1.1.0 微信链路移植见[实施计划](docs/desktop-port-plan.md)与[桌面说明](../desktop/README.md)。
+桌面 1.2.0 小组及个人定位见[桌面说明](../desktop/README.md)和[当前架构](docs/desktop-app.md)。早期微信链路移植见[历史计划](docs/desktop-port-plan.md)。
 
 ## 文档索引
 

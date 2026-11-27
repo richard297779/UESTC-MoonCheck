@@ -1,4 +1,8 @@
-# 桌面 1.1.0 架构更新
+# 桌面 1.2.0 架构更新
+
+配置 schema 3 将 `group_report` 作为主账号及各账号表项的属性，旧配置从原调度开关继承，新账户默认小组模式。小组服务使用门户会话校验安全员身份和待确认人数，个人定位沿用微信票据链。同一调度可处理混合模式。身份接口明确返回「未登录」时，状态查询最多执行一次 CAS 登录再复查。使用见[桌面说明](../../desktop/README.md)。
+
+# 桌面 1.1.0 架构更新（历史）
 
 2026-10-27：微信票据链已移植，桌面版本独立为 1.1.0。`wechat_wire.py` 负责字节编解码、PyCryptodome GCM/ECDH；`wechat_transport.py` 负责有界 socket/HTTPDNS/MMTLS/0-RTT；`wechat.py` 负责 OAuth 签名、轮换落盘、两 code 和独立 MP Cookie 取票。业务 `service._checkin_one` 在 submit 前取得账号自己的票据，`CheckinApi.submit` 拒绝缺失或非法票据。
 

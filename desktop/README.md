@@ -2,30 +2,30 @@
 
 Windows / Linux 原生桌面程序，CLI 与 tkinter 图形界面共用业务逻辑。电脑独立执行 CAS 登录、门户预热、微信授权刷新、MMTLS 获取小程序 code、平台取票、提交与结果复查，**无需 ESP32**。
 
-当前 Windows 本地验证版为 1.2.0，新增安全员小组确认。桌面真实账号联调有待验证。已发布的 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供旧版 Windows ZIP。固件、APK 和 BLE 控制台使用仓库根目录的独立版本。
+当前 Windows 本地验证版为 1.2.0，新增安全员小组确认。已在本机用真实账号验证 CAS 登录、安全员身份和待确认人数查询，真实提交待验证。已发布的 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供旧版 Windows ZIP。固件、APK 和 BLE 控制台使用仓库根目录的独立版本。
 
 ## 新版小组确认
 
-在「账户配置」填写学号、密码和 32 位浏览器指纹。新增账户默认勾选「小组模式」。个人定位账户取消勾选并设置位置与微信授权。点击「应用」后保存配置。命令行可用 `MoonCheck account new <学号> <指纹>` 建号，`MoonCheck account mode <标签> group|personal` 设置模式。旧配置升级后，各账户继承原有模式。从源码运行时，将 `MoonCheck` 替换为 `python desktop/mooncheck.py`。
+在「账户配置」填写学号、密码和 32 位浏览器指纹。新增账户默认勾选「小组模式」。个人定位账户取消勾选并设置位置与微信授权。点击「应用修改」后保存配置。命令行可用 `MoonCheck account new <学号> <指纹>` 建号，`MoonCheck account mode <标签> group|personal` 设置模式。旧配置升级后，各账户继承原有模式。从源码运行时，将 `MoonCheck` 替换为 `python desktop/mooncheck.py`。
 
-仅需配置校园网访问和本人 CAS 登录信息。开关适用于所有启用的账号，每个账号均须有安全员小组上报权限。用 `status` 读取待确认人数，`checkin --dry-run` 可以离线查看请求类型。原有 `auto` 任务在配置的窗口内执行批量确认。
+小组账户需要校园网访问、本人 CAS 凭据和安全员权限。`status` 读取待确认人数，会话失效时尝试登录一次。`checkin --dry-run` 可离线查看请求类型。`auto` 在配置的窗口内按各账户的模式执行。
 
 有组员联系不上时，请在计划执行前到网页提交异常，或暂停这次计划运行。程序会跳过平台已标记异常、已处理或未识别的记录，并提示剩余待办。此前发布的桌面安装包需要用新源码重新构建才包含该模式。
 
 ## 使用前准备
 
 - 本人 CAS 学号、密码、已信任浏览器指纹；获取方式见[快速开始](../docs/quickstart.md)。
-- 每个账号自己的微信 openid、access、refresh。初始授权与固件一样由本人按[微信授权说明](../docs/quickstart.md#22-准备微信授权凭据)扫码准备；本版不接管或自动操作微信客户端。
-- 宿舍现场确认的坐标、可访问校园打卡服务的网络。不要同时在桌面、ESP32、QR Connect 页面刷新同一套授权；导入前关闭授权页面。
+- 个人定位账户需要自己的微信 openid、access、refresh。初始授权与固件一样由本人按[微信授权说明](../docs/quickstart.md#22-准备微信授权凭据)扫码准备；本版不接管或自动操作微信客户端。
+- 所有账户需要可访问校园打卡服务的网络。个人定位账户另需宿舍现场确认的坐标。不要同时在桌面、ESP32、QR Connect 页面刷新同一套授权；导入前关闭授权页面。
 - 自动运行需要电脑开机、联网且未休眠；程序不会自动安装系统计划任务。
 
 ## 图形界面
 
 双击 `MoonCheck.exe`，首次运行在程序旁生成 `config.json`；建议放在本人可写、受保护的目录。
 
-1. “基本”页填写本人 CAS 凭据、指纹和位置，点击保存配置。
-2. 多人使用时先在“账号”页新增账号并保存。账号表为空时使用单人 `self`，最多 6 个账号。
-3. 打开“微信授权”，选择**授权所属账号**，填写 OpenID / Access token / Refresh token / 绝对到期 Unix 秒；不知道到期时间可填 `0`，首次使用自动刷新。点击“导入并保存”立即落盘，敏感字段不回填到界面。
+1. 在「账户配置」填写学号、密码和浏览器指纹，选择模式后点「应用修改」，再保存配置。
+2. 可继续添加账户，最多 6 个。个人定位账户可设置独立位置，或沿用「设备与默认位置」保存的坐标。
+3. 个人定位账户打开「微信授权」，选择**授权所属账号**，填写 OpenID / Access token / Refresh token / 绝对到期 Unix 秒；不知道到期时间可填 `0`，首次使用自动刷新。点击“导入并保存”立即落盘，敏感字段不回填到界面。
 4. 点击“取票测试”。该操作只刷新授权、获取两次独立小程序 code、检查绑定并申请票据，**不会提交打卡或发送通知**。
 5. 点击登录、查状态，窗口内确认后执行打卡。通知页配置各账号的推送通道。
 
@@ -37,9 +37,8 @@ Windows / Linux 原生桌面程序，CLI 与 tkinter 图形界面共用业务逻
 
 ```text
 MoonCheck.exe --version
-MoonCheck.exe config set student_id 本人学号
-MoonCheck.exe config set password
-MoonCheck.exe config set browser_fingerprint 本人指纹
+MoonCheck.exe account new <学号> <32位浏览器指纹>
+MoonCheck.exe account list
 MoonCheck.exe wx import                 # 逐项隐藏输入；到期时间回车为 0
 MoonCheck.exe wx status                 # 仅显示是否保存和到期时间
 MoonCheck.exe wx test                   # 只验证取票，不提交
@@ -52,7 +51,7 @@ MoonCheck.exe checkin                   # 真实提交，需在窗口内
 多人模式使用 `wx import -a A01` / `wx test -a A01` / `wx clear -a A01`。单人也可显式指定 `-a self`。账号、通知和计划命令与 1.0.0 保持兼容：
 
 ```text
-MoonCheck.exe account add A01 本人学号 - 本人指纹
+MoonCheck.exe account new <学号> <32位浏览器指纹> --personal
 MoonCheck.exe sched set 22:00 23:30
 MoonCheck.exe notify list
 MoonCheck.exe auto                      # 单轮，逐账号执行与通知汇总
@@ -77,11 +76,11 @@ MoonCheck.exe auto                      # 单轮，逐账号执行与通知汇�
 
 沿用系统调度器调用 `MoonCheck auto` 的方式；例如每天 22:02 启动，窗口内每 3 分钟重试到 23:30。此处只是配置指南，不会替你创建任务。时间窗口和提交 clientTime 使用中国标准时间 UTC+8。
 
-- 每次真正提交前获取新票据，两个 code 不复用；票据和 MMTLS 密钥只在内存中保留。
+- 个人定位提交前获取新票据。两个 code 各用一次，票据和 MMTLS 密钥保留在内存中。
 - 授权过期先刷新；login_buffer 明确被拒绝时最多刷新后重试一次。
 - 返回 46001/46002/46003 或网络结果未知时，本轮停止，不自动重放提交；下一次 `auto` 先查今日结果，再决定是否重新取票提交。
 - 同配置的 CLI/GUI 网络操作使用非阻塞文件锁，避免同时旋转 token。不要在多台设备上共用同一授权。
-- 未导入该账号微信授权时拒绝提交；不借用其他账号或顶层授权。
+- 个人定位账户须导入该账号自己的微信授权。小组模式使用校园门户会话。
 
 ## 从源码运行与构建
 

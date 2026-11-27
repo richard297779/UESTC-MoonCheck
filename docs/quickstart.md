@@ -2,7 +2,7 @@
 
 > 本文假设板子**已经刷好固件**。还没刷？先看 [刷固件](flashing.md)。
 >
-> 配置需要已刷固件的开发板与本人授权信息。安卓用户可用发行包内 APK 按键配置；电脑控制台需要 Python 3.10+。初始浏览器指纹、微信授权及坐标仍按下文由本人准备。
+> 配置需要已刷固件的开发板与本人授权信息。安卓用户可用发行包内 APK 按键配置；电脑控制台需要 Python 3.10+。每个账户由本人准备浏览器指纹。微信授权和宿舍坐标用于个人定位模式。
 
 ---
 
@@ -13,9 +13,9 @@
 | 硬件 | 已烧录固件的板子、USB 数据线、5 V 供电 |
 | 软件 | Python 3.10+（推荐 3.12）+ `bleak` |
 | 信息 | 学号、统一身份认证密码、微信授权凭据、宿舍 WiFi 名与密码 |
-| 现场 | **浏览器指纹**（CAS 登录用）、**宿舍坐标**（必须在宿舍取） |
+| 现场 | **浏览器指纹**用于 CAS 登录。个人定位另需在宿舍采集坐标 |
 
-> 当前发行版本为 `0.8.0`（用户确认基本功能；其他四种实验板型未经实测），固件与 Android 测试 APK 可从 [发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载。旧 v0.4.0 不支持微信票据；旧 v0.5.1 的长配置存在截断限制。
+> 本文小组流程适用于 v0.9.0 本地验证固件与配套控制端。已发布的 `v0.8.0` 固件与 Android 测试 APK 可从 [发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载。旧 v0.4.0 不支持微信票据；旧 v0.5.1 的长配置存在截断限制。
 
 ---
 
@@ -27,7 +27,7 @@
 
 ## 安卓：使用 APK 配置
 
-安装 `MoonCheck-0.8.0-android-debug.apk`，授予附近设备权限，扫描并核对名称/MAC 后选板。个人定位模式在“配置”页保存 Wi-Fi、账号、微信授权、宿舍坐标和时间，然后体检、测试取票并开启自动任务。帮助页可离线搜索排错说明。
+安装同版 `MoonCheck-0.9.0-android-debug.apk`，授予附近设备权限，核对名称和 MAC 后选板。在「配置」保存 Wi-Fi 和计划，在「账户」填写本人凭据并选择模式。个人定位账户另需位置和微信授权，配置后可测试取票。帮助页提供离线排错说明。
 
 APK 为测试版，支持 Android 8+，不是免硬件的独立打卡程序。敏感输入不写入手机存储；退出应用会断开连接。完整说明见 [Android 文档](../android/README.md)。以下是电脑控制台与授权信息的准备步骤。
 
@@ -161,27 +161,16 @@ python tools/ble_console.py --name WANAN-XXXX
 
 ## 5. 写入配置
 
-依次输入下面 6 条（每行一条）：
+先执行 `account list` 读取账户快照，再用 `account new` 新建账户，按提示隐藏输入密码。
 
 ```text
 wifi <宿舍WiFi名> <WiFi密码>
-auth <学号> <密码> <第 2.1 步取到的指纹>
-wx import 0 <openid Cookie> <accesstoken Cookie> <refreshtoken Cookie> 0
-loc <纬度> <经度> 四川省成都市郫都区
+account list
+account new <学号> <32位浏览器指纹>
 sched 22:00 23:30 30
-auto on
 ```
 
-示例（**数值全是占位，请换成你自己的**）：
-
-```text
-wifi Dorm-2.4G mywifi123
-auth 2023XXXXXXX ************ 0123456789ABCDEF0123456789ABCDEF
-wx import 0 <openid> <accesstoken> <refreshtoken> 0
-loc 30.753456 103.934123 四川省成都市郫都区
-sched 22:00 23:30 30
-auto on
-```
+新账户默认小组模式。个人定位账户在命令末尾加 `personal`，再从「账户配置」设置位置和微信授权。升级后的现有账户可直接编辑。验证后按需运行 `auto on`。
 
 | 项 | 注意 |
 | --- | --- |
@@ -205,6 +194,8 @@ auto on
 ## 6. 验证链路
 
 ### 6.1 全链路自检
+
+小组账户用「今日打卡 → 登录测试」核对待确认人数。窗口外默认暂缓新登录，可勾选「窗口外也登录」或执行 `login force`。以下 `chain` 回执和微信取票示例针对个人定位账户。
 
 ```text
 chain 0
@@ -301,7 +292,7 @@ status
 | `hello` / `status` / `time` | 版本与 MAC / 全量状态 / 设备时间 |
 | `wifi <ssid> [pass]` | 配置 WiFi |
 | `scan` / `netcheck` | 扫描 2.4 GHz / 判断是否需要网页认证 |
-| `auth <学号> <密码> [指纹]` | 配置账号 |
+| `account new <学号> <32位指纹> [personal]` | 新建账户，默认小组模式，密码隐藏输入 |
 | `loc <lat> <lng> [地址]` | 配置坐标 |
 | `sched <打卡时间> [结束] [抖动]` | 配置时间 |
 | `auto on\|off` | 开关每日自动打卡 |
@@ -317,8 +308,8 @@ status
 
 安装当前 APK 后，控制台的“运行状态”可手动读取联网名称、内存峰值与 PSRAM，并在开发者选项读取脱敏日志。旧固件缺失指标显示“固件未提供”。新增板型未经实际验证；环境选择与测试反馈见[板型支持](board-support.md)。
 
-## 0.8.0 账号管理与电脑界面
+## 账号管理与电脑界面
 
-新版账号修改只提交非空项，留空保留旧密码、指纹、启用状态和独立位置；新建须填写标签、学号、密码、32 位指纹，经纬度成对填写，地址可独立修改。删除或清空会清除全部微信授权，保留账号需重新导入；修改学号会清除该槽位旧授权。登录、链路、打卡与演练可勾选目标账号。旧固件缺少 account-v2 / selected-execution 时须升级，详见[多人账号](multi-account.md)。
+新版账号修改只提交非空项，留空保留旧密码、指纹、启用状态和独立位置；新建须填写学号、密码、32 位指纹，标签由设备分配，经纬度成对填写，地址可独立修改。删除或清空会清除全部微信授权，保留账号需重新导入；修改学号会清除该槽位旧授权。登录、链路、打卡与演练可勾选目标账号。旧固件缺少 account-v2 / selected-execution 时须升级，详见[多人账号](multi-account.md)。
 
-电脑用户下载本版 `MoonCheck-0.8.0-ble-console-source.zip`，解压后安装 `tools/requirements-ble.txt` 并双击 `tools/ble_console.pyw`；四栏目使用说明见[电脑蓝牙控制台](ble-gui.md)。
+电脑用户解压本地验证包内的 `MoonCheck-0.9.0-ble-console-source.zip`，安装 `tools/requirements-ble.txt` 并双击 `tools/ble_console.pyw`；四栏目使用说明见[电脑蓝牙控制台](ble-gui.md)。

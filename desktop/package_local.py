@@ -51,7 +51,7 @@ def main():
     print('Frozen smoke: version, crypto selftest, personal and group dry-run, authorization status passed')
     guide = '''# MoonCheck Desktop {version} (Windows)
 
-这是桌面端本地测试构建，未完成真实桌面账号联调；固件/Android 的确认不代表桌面已实测。
+这是桌面端本地测试构建。小组账户已验证真实登录与只读计数。真实提交、个人定位联调和 Linux 构建待验证。
 
 1. 解压整个目录至本人可写、受保护的位置，双击 MoonCheck.exe。无需安装 Python。
 2. 在「账户配置」填写 CAS 学号、密码和 32 位浏览器指纹，应用后保存。新建账户默认勾选小组模式。用 status 查待确认人数。

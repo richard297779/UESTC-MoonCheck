@@ -1,6 +1,6 @@
 # 自行编译固件
 
-> 发行版本 v0.8.0（Latest），用户确认基本功能已查验无误；具体逐设备明细未提供，其他四型号仍未经实际验证。详见[板型支持矩阵](../docs/board-support.md)。下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0)含固件、Android Debug APK 与电脑 BLE 控制台源码。
+> 已发布版本为 v0.8.0（Latest），已通过当时的基本功能验收。当前源码构建 v0.9.0 小组确认版，四种实验板型仍待实机验证。详见[板型支持矩阵](../docs/board-support.md)。下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0)含固件、Android Debug APK 与电脑 BLE 控制台源码。
 
 ---
 
@@ -61,7 +61,7 @@ pio device monitor --port COM5               # 串口日志，115200
 
 1. 配置 Wi-Fi，并在电脑 BLE 控制台「账户配置」或 Android「账户」填写学号、密码和 32 位浏览器指纹。
 2. 新增账户默认勾选「小组模式」。具有安全员权限的账号使用小组确认，个人定位账户取消勾选并设置位置与微信授权。CLI 使用 `group on <账号>`、`group off <账号>`，再用 `group status` 核对。已有账户升级后继承原模式。
-3. 在打卡窗口执行登录检查、前置体检，核对待确认人数。命令行用 `login`、`probe`，窗口外的登录检查可用 `login force`。只有成功读取小组状态时才返回 `groupPendingCount`。
+3. 在打卡窗口执行登录检查、前置体检，核对待确认人数。命令行用 `login`、`probe`，窗口外默认暂缓新登录，可勾选「窗口外也登录」或执行 `login force`。登录检查只核验会话和人数。只有成功读取小组状态时才返回 `groupPendingCount`。
 4. 按已有计划运行。设备按各账号配置选择流程。微信票据为计划中的首个启用个人定位账户预取。
 
 有组员联系不上时，请在计划执行前到网页提交异常。需要暂缓时先执行 `auto off`，处理完异常后再按需要恢复。小组模式遇到平台标记异常、已处理或未识别的记录会保留给人工检查，并在复查仍有待办时报告未完成。

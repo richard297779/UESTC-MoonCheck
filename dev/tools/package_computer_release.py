@@ -39,7 +39,7 @@ def main():
     assets = [output / desktop.name, ble]
     release_manifest = dict(version=version, tag=tag, sourceCommit=commit, sourceDirty=False,
         kind='prerelease', firmwareVersion=(ROOT / 'VERSION').read_text().strip(),
-        validation='Offline tests and Windows frozen smoke only; no live desktop account or BLE GUI validation; no Linux binary',
+        validation='Offline tests and Windows frozen smoke passed; live group login and read-only count verified; live submission, BLE GUI validation and Linux build pending',
         files=[dict(name=p.name, size=p.stat().st_size, sha256=digest(p.read_bytes())) for p in assets])
     manifest_file = output / 'computer-release-manifest.json'
     manifest_file.write_text(json.dumps(release_manifest, indent=2) + '\n', encoding='utf-8')

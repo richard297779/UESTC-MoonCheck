@@ -1,4 +1,4 @@
-# v0.8.0：账号快照、合并与目标执行（2026-10-29）
+# 当前账户能力（BLE 协议 1，固件 v0.9.0）
 
 协议仍为 1。0.8.0 在 `hello.caps` 增加 `account-v2` 与 `selected-execution`；GitHub 已发行 v0.7.0 不具有这些能力。v0.9.0 声明 `group-report` 和 `account-mode`。新版客户端按账号快照读取模式；`cfg.schedule.groupReport` 表示当前运行上下文，并保留早期固件设备级模式的兼容回读。
 
@@ -181,7 +181,7 @@ code=123456                          // 纯文本形式（同样接受）
 | `factory.reset` | `confirm:"YES"` | 擦除配置与凭据后重启 | 否 |
 | `reboot` | — | 重启 | 否 |
 | `test.http` | `url` | 访问任意 URL：状态码 / 字节数 / 耗时 / 是否命中关键字 | 是 |
-| `test.login` | `force?` | 登录链路测试；**默认只在窗口内登录**（会话 TTL≈1 h 且打卡只接受窗口内，窗口外登录会白烧一次登录次数），`force=true` 才强制。授权本身与窗口无关，靠门户预热 `GET /api/isLoginFailure`（`docs/api-contract.md` §8.7） | 是 |
+| `test.login` | `force?` | 登录链路测试；**默认只在窗口内登录**（会话 TTL≈1 h 且打卡只接受窗口内，窗口外登录会白烧一次登录次数），`force=true` 才强制。小组模式复查安全员身份和待确认人数。身份接口明确提示未登录时进入窗口判断 | 是 |
 | `test.chain` | `wait_s?,force?` | **全链路自检**：网络/校时 → 登录页 → 登录 → **进入微应用** → 业务接口；`wait_s` 秒内每 30 s 重探放行（≤900） | 是 |
 | `test.probe` | — | 只读体检。个人模式查状态与打卡窗口，小组模式查安全员会话和待确认人数 | 是 |
 | `test.checkin` | `force?` | 打卡测试；`force` 仅跳过"今日已打卡"检查，**仍需在窗口内** | 是 |

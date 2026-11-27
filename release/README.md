@@ -40,4 +40,4 @@ release/
 
 ## 独立电脑端预发行版
 
-[desktop-v1.1.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供独立桌面 Windows ZIP 和当时的旧 BLE GUI 源码 ZIP；独立桌面账号链路仍待实测，最新 BLE 界面请使用 v0.8.0。本地产物位于被忽略的 `desktop/dist/release/desktop-v1.1.0/`，不混入上述固件目录。详见[发行说明](../dev/docs/computer-release.md)。
+[desktop-v1.1.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0) 提供独立桌面 Windows ZIP 和当时的旧 BLE GUI 源码 ZIP；当前源码的 Windows 本地验证包为 1.2.0，输出至 `desktop/dist/release/desktop-v1.2.0/`，包含配套的 v0.9.0 BLE 源码 ZIP。详见[桌面说明](../desktop/README.md)与[历史发行记录](../dev/docs/computer-release.md)。

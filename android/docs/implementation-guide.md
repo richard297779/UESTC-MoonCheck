@@ -232,6 +232,10 @@ Android 12+ 申请运行时 `BLUETOOTH_SCAN`、`BLUETOOTH_CONNECT`；旧版按�
 
 本文件属于仓库实施计划，按 Agent Operating Guide 留在仓库；Notion 本次检索未找到 MoonCheck 既有页面，规范 Documents 目的地查询也无结果。为遵守“不保存可从仓库恢复的信息”，不在 Notion 复制该文档或源码。
 
-## v0.8.0 账号能力适配（2026-10-29）
+## v0.9.0 账户模式
+
+`DeviceRepository` 从账户快照读取每账户的 `groupReport`。固件声明 `account-mode` 后，`AccountCommands` 才把小组模式作为 JSON 布尔字段写入账户补丁。新建默认勾选，个人定位表单可设置独立位置。登录检查依固件的已保存模式执行。字段与兼容行为见[协议](../../dev/docs/ble-protocol.md)。
+
+## v0.8.0 账号能力适配（2026-10-29，历史记录）
 
 新增 AccountCommands 隔离账号快照目标校验与请求构造；DeviceRepository 按 hello.caps 选择 account.snapshot 并保存 revision。新建使用 account.patch/create，修改表单按标签、序号、学号匹配，空字段省略，保留旧配置。微信表单自动映射目标槽位，打开时刷新映射，快照变化须重新确认。执行表单用复选框选择目标，保留手机卡片布局。旧固件可查看原有数据，安全新增 / 修改 / 授权与指定账号执行提示升级，不退回覆盖。协议详见 [BLE 契约](../../dev/docs/ble-protocol.md)。

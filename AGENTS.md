@@ -1,6 +1,6 @@
 # MoonCheck Agent Guide
 
-适用于整个仓库。当前用户请求优先；修改前阅读相关源码和模块文档。以下命令默认从仓库根目录执行，除非另有说明。本文依据 2026-10-27 的仓库扫描编写，工具链版本以对应配置文件为准。
+适用于整个仓库。当前用户请求优先；修改前阅读相关源码和模块文档。以下命令默认从仓库根目录执行，除非另有说明。当前覆盖 v0.9.0 固件与控制端，工具链版本以对应配置文件为准。
 
 ## 技术栈与目录
 
@@ -17,7 +17,7 @@
 - 六目标目录见 `firmware/board-targets.json`；新增 WROVER-4MB、S3-N8/N8R8、C3-DevKitM-1 均未经实机验证，默认发行仍只选原有两个目标。固件原有环境为 `esp32-s3-devkitc-1`（S3-N16R8）与 `esp32-wroom-32`（4 MB、无 PSRAM）。账号数量由运行配置决定，不创建单人/多人构建变体。
 - 固件依赖固定在 `firmware/platformio.ini`：espressif32 7.1.3、NimBLE-Arduino 2.5.1、ArduinoJson 7.4.3。PlatformIO 框架包版本不等于 Arduino 运行库版本。
 - Android 使用 JDK 17、Gradle 8.11.1、AGP 8.9.2、Compose BOM 2025.04.01、SDK 35、minSdk 26。依赖集中在 `android/gradle/libs.versions.toml`。
-- 桌面 1.1.0 已移植微信授权/MMTLS/取票，需按 desktop/requirements.txt 安装依赖；未完成真实桌面账号验证，不沿用固件实测结论。桌面版本由 desktop/VERSION 独立维护，默认不混入固件发行。
+- 桌面 1.2.0 支持小组确认，个人定位使用微信授权、MMTLS 和取票。依赖见 desktop/requirements.txt。本机真实账号已验证小组登录与计数，真实提交和个人定位联调待验证。桌面版本由 desktop/VERSION 独立维护，默认不混入固件发行。
 
 ## 开发环境
 
@@ -86,10 +86,11 @@ python tools/check_project.py --release-dir release/v<版本号>
 
 把 `<版本号>` 替换为根目录 `VERSION` 的实际值。正式核验可追加 `--require-clean`，但要求工作区干净、清单来源与当前提交一致；历史发行包不能直接当成新提交产物。
 
-## v0.8.0 补充约定
+## 当前版本补充约定
 
 - 固件 / APK / 电脑 BLE 源码跟随根 VERSION；独立打卡桌面程序继续独立版本。当前 Android versionCode 为 900。
 - account.snapshot 返回完整学号，仅用户界面可显示；诊断仍脱敏。account.patch 只发送非空字段，客户端携 expectedRevision，微信导入同时核对 label / slot；账号删改后不得重用旧映射。
+- 固件声明 account-mode 后，各账户独立保存小组模式。新建默认小组模式，旧配置继承原模式。账号身份与会话校验参见 dev/docs/api-contract.md。
 - 指定账号执行依赖 selected-execution，不得临时修改全局启用开关模拟选择；每人隔离会话、票据、位置，外层成功不能代替逐账号业务成功。
 - 修改账号合并、目标或微信槽位逻辑，运行 `python tools/test_account_patch.py --compiler c++`，或用 --zig；该测试直接编译生产头文件。预取票据也必须使用当前账号归属。
 - firmware/scripts/reproducible_paths.py 在编译阶段移除本机路径，不对已有发行二进制进行字符串替换。
