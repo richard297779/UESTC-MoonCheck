@@ -3,7 +3,7 @@
 
 # 🌙 MoonCheck
 
-**ESP32 晚安成电打卡终端** · 本地验证版 v0.9.0 · 已发布版本 v0.8.0 · [独立桌面版](desktop/README.md)
+**ESP32 晚安成电打卡终端** · [v0.9.0 最新发行](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) · [独立桌面版](desktop/README.md)
 
 一块常驻宿舍的 ESP32，蓝牙配置一次，之后每晚自动完成「登录 → 门户预热 → 进入微应用 → 获取微信操作票据 → 定位打卡 → 结果确认」。配置完成后不需要电脑，也不用每天操作。
 
@@ -18,7 +18,7 @@
 - ESP32 使用更新后的固件后，可在电脑 BLE 控制台「查询与配置 → 账户配置」或 Android「账户」编辑对应账户。命令行可执行 `group on <账号>`。操作见 [固件小组模式](firmware/README.md#新版小组确认)。
 - 独立桌面版在「账户配置」中按账户设置小组模式。操作见 [桌面小组模式](desktop/README.md#新版小组确认)。
 
-如发现组员无法联系，在计划运行前到网页提交异常，或先暂停本轮自动操作。程序根据平台待确认名单提交“情况正常”，并复查待确认人数。上述功能需要使用当前源码，发行页里的旧包仍对应发布时的功能。
+如发现组员无法联系，在计划运行前到网页提交异常，或先暂停本轮自动操作。程序根据平台待确认名单提交“情况正常”，并复查待确认人数。小组确认随 v0.9.0 发行。
 
 ## 功能
 
@@ -35,7 +35,7 @@
 - **APK 运行状态**：v0.7.0 增加实际联网名称、内存峰值、PSRAM、运行时长与开发者脱敏日志。
 - **桌面版 1.2.0**支持安全员小组确认，继续提供个人打卡所用的微信授权与取票。Windows 本地验证包独立构建。真实账号已验证小组登录和只读计数，真实提交待验证。详见[桌面说明](desktop/README.md)。
 - **蓝牙中控**支持每账户设置打卡模式、留空保留凭据、匹配微信授权目标及指定账号执行。双击 `tools/ble_console.pyw` 打开新版图形界面。详见[使用说明](docs/ble-gui.md)。
-- **电脑端下载**可选已发布的 [v0.8.0 BLE 控制台源码包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0)或 [desktop-v1.1.0 Windows 预发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0)。体验小组确认请使用当前源码或配套的本地验证包。
+- 电脑 BLE 控制台源码随 [v0.9.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) 提供。独立 Windows 打卡程序的已发布版本为 [desktop-v1.1.0 预发行版](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/desktop-v1.1.0)。
 - **内置微信扫码授权**：Android 和电脑 BLE GUI 可获取、刷新二维码，在本人微信确认后回填三 Cookie；不自动发送设备。[实现与验证](dev/docs/qr-authorization.md)记录验证范围；本轮用户已确认基本功能，未提供逐项扫码闭环或兼容矩阵明细。
 
 ---
@@ -58,13 +58,13 @@
 
 ### 1. 刷固件
 
-小组确认使用 v0.9.0 固件和配套控制端，构建方法见[本地验证版说明](dev/docs/release-guide.md)。已发布的 v0.8.0 通过了当时的基本功能验收，四种实验板型仍待实机验证。
+v0.9.0 已在 ESP32-S3-N16R8 上由用户确认配置和真实打卡成功。ESP32-WROOM-32 构建通过，当前版本实机待验证。四种实验板型可按[板型支持说明](docs/board-support.md)自行构建。
 
-从 [v0.8.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载对应板型固件；也可下载 `MoonCheck-0.8.0-release.zip` 获取六板型固件（四种为未实测实验目标）、Android 测试 APK、电脑 BLE 控制台源码与使用说明。网页烧录见[刷固件](docs/flashing.md)，自行构建见[固件说明](firmware/README.md)。
+从 [v0.9.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) 下载对应板型固件。`MoonCheck-0.9.0-release.zip` 包含两种常规板型固件、Android Debug APK、电脑 BLE 控制台源码与使用说明。网页烧录见[刷固件](docs/flashing.md)，自行构建见[固件说明](firmware/README.md)。
 
 > 详细步骤、升级（保留配置）和报错处理见 **[刷固件](docs/flashing.md)**。
 
-> **版本范围：** v0.6.0 新增 Android 控制端并修复长配置截断；APK 实际联调已由用户确认通过、功能全部正常，当时 v0.6.0 转为 Latest；当前 Latest 为 v0.8.0；APK 仍使用原 Debug 签名。旧 v0.5.1 已支持微信票据，但长 JSON 命令会受旧队列限制。
+> **版本范围：** v0.6.0 新增 Android 控制端并修复长配置截断；APK 实际联调已由用户确认通过、功能全部正常，当时 v0.6.0 转为 Latest；当前 Latest 为 v0.9.0；APK 仍使用原 Debug 签名。旧 v0.5.1 已支持微信票据，但长 JSON 命令会受旧队列限制。
 
 ### 2. 准备授权信息与宿舍坐标
 

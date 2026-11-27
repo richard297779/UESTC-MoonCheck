@@ -1,13 +1,13 @@
 # v0.9.0 板型支持与验证反馈
 
-当前本地验证版为 **0.9.0**，Android versionCode **900**，BLE 协议 **1**。本机已用真实账号验证小组登录和只读计数，固件实板与真实提交待验证。已发布 v0.8.0 的验收范围见其[发行说明](../release/v0.8.0/CHANGELOG.md)。
+当前发行版为 **0.9.0**，Android versionCode **900**，BLE 协议 **1**。用户已确认 ESP32-S3-N16R8 配置成功并完成真实打卡。其他板型与配置保留升级的验收范围见[本版说明](../release/v0.9.0/CHANGELOG.md)。
 
 维护者只能实测 **ESP32-S3-N16R8** 和 **ESP-WROOM-32**。其余四型号均 **未经实际验证**；编译通过仅说明当前工具链可生成产物。欢迎验证者向开发者反馈。
 
 | 发行板型 ID | PlatformIO 环境 | 硬件规格 | 状态 |
 | --- | --- | --- | --- |
-| `s3-n16r8` | `esp32-s3-devkitc-1` | 16 MB Flash / 8 MB OPI PSRAM；GPIO48 RGB | 原有目标，小组确认待实测 |
-| `wroom32-4mb` | `esp32-wroom-32` | 4 MB Flash，无 PSRAM；GPIO2 普通 LED | 原有目标，小组确认待实测 |
+| `s3-n16r8` | `esp32-s3-devkitc-1` | 16 MB Flash / 8 MB OPI PSRAM；GPIO48 RGB | 用户确认配置成功并完成真实打卡 |
+| `wroom32-4mb` | `esp32-wroom-32` | 4 MB Flash，无 PSRAM；GPIO2 普通 LED | 已编译和核验镜像，本版实机待验证 |
 | `wrover-4mb` | `esp32-wrover-4mb` | 确定为 4 MB Flash / 8 MB QSPI PSRAM；LED 默认关闭 | 实验构建，未经实际验证 |
 | `s3-n8` | `esp32-s3-n8` | 8 MB Flash，无 PSRAM；GPIO48 RGB | 实验构建，未经实际验证 |
 | `s3-n8r8` | `esp32-s3-n8r8` | 8 MB Flash / 8 MB OPI PSRAM；GPIO48 RGB | 实验构建，未经实际验证 |

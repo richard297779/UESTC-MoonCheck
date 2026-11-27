@@ -26,7 +26,7 @@ GUI 不自动安装依赖；缺少 bleak 时显示安装提示。Linux 需安装
 4. **查询与配置**通过“分类 → 操作”两级菜单选择所有功能，上部表单独立滚动，下部固定显示友好结果。依次提供「账户配置」「今日打卡」「计划与通知」「设备与诊断」。Wi-Fi 扫描显示全部 2.4 GHz 接入点，包括同名及隐藏网络，提供 SSID、RSSI、频道、加密和 BSSID。
 5. **完整回执**只在开发者选项开启后出现；近期日志、原始 JSON 和会话工具也归入开发者菜单。帮助入口可离线阅读。
 
-新版随 v0.9.0 源码与本地验证包提供。逐账户模式需固件声明 `account-mode`，安全合并和指定账号执行分别依赖 `account-v2`、`selected-execution`。连接旧版固件时，界面按设备声明的能力提供操作。
+新版随 v0.9.0 发行包提供。逐账户模式需固件声明 `account-mode`，安全合并和指定账号执行分别依赖 `account-v2`、`selected-execution`。连接旧版固件时，界面按设备声明的能力提供操作。
 
 ## 新版小组确认
 
@@ -69,7 +69,7 @@ python -m unittest discover -s tools/tests -v
 
 自动测试覆盖表单、能力协商、回执 / 断线语义、全部菜单渲染、账号匹配及源码包完整性；不访问真实设备或账号。2026-10-29 用户确认基本功能已查验无误，未提供逐设备或逐项流程明细。
 
-已发布的 [v0.8.0](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 提供对应的源码 ZIP。v0.9.0 的逐账户模式使用当前仓库源码或本地整包中的 `MoonCheck-0.9.0-ble-console-source.zip`。双击包内 `tools/ble_console.pyw` 会加载同目录的新界面。独立打卡桌面程序按自己的版本构建。
+从 [v0.9.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) 下载 `MoonCheck-0.9.0-ble-console-source.zip`，也可使用整包内的同名 ZIP。双击包内 `tools/ble_console.pyw` 会加载同目录的新界面。独立打卡桌面程序按自己的版本构建。
 
 ## 内置微信扫码授权
 
@@ -81,4 +81,4 @@ python -m unittest discover -s tools/tests -v
 
 ## 兼容说明
 
-新版 GUI 使用 `account.snapshot` / `account.patch`。CLI 的 `account add` 和旧客户端仍使用历史整条覆盖协议；它们的留空语义与新版合并不同，修改已有账号建议使用新版图形界面。小组确认的本地验证版本为 0.9.0。使用本地发行包内的同版 APK、固件与 BLE 源码。
+新版 GUI 使用 `account.snapshot` / `account.patch`。CLI 的 `account add` 和旧客户端仍使用历史整条覆盖协议；它们的留空语义与新版合并不同，修改已有账号建议使用新版图形界面。小组确认使用发行包内的同版 APK、固件及 BLE 源码。

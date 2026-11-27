@@ -1,8 +1,8 @@
-# v0.9.0 本地验证版
+# v0.9.0 正式发行
 
-固件、Android 和 BLE 控制台源码版本均为 0.9.0，Android versionCode 为 900。独立 Windows 桌面版为 1.2.0。本机真实账号已验证小组登录和只读计数。实板 BLE 联调与真实打卡提交待验证。
+固件、Android 和 BLE 控制台源码版本均为 0.9.0，Android versionCode 为 900。独立 Windows 桌面版为 1.2.0。用户已在 ESP32-S3-N16R8 配置成功并完成真实打卡。ESP32-WROOM-32 已通过构建及镜像校验，v0.9.0 实机待验证。
 
-构建顺序沿用下文。本地验证包使用 `make_release.ps1 -NoUpload -IncludeExperimental`，并用 `tools/check_project.py --release-dir release/v0.9.0 --require-clean` 核对清单与提交。桌面按独立发行流程生成 `desktop/dist/release/desktop-v1.2.0/`。
+先构建发行范围的两种常规板型和 Android APK。`make_release.ps1 -NoUpload` 默认仅打包这两种板型。用 `tools/check_project.py --release-dir release/v0.9.0 --require-clean` 核对清单与提交。推送 main 后用 `make_release.ps1 -Upload` 发布，核对远端资产摘要后设为 Latest。桌面 1.2.0 按独立流程打包。
 
 以下发行步骤记录 v0.8.0 及更早版本。作为新版本参考时使用当前版本号、板型配置和本轮验证范围。
 

@@ -18,7 +18,7 @@
       "ledRgb": true,
       "usbMode": "uart",
       "status": "baseline",
-      "physicalValidation": "v0.9.0 hardware and live account validation pending",
+      "physicalValidation": "User confirmed configuration and a successful live check-in; upgrade and broader BLE validation pending",
       "defaultRelease": true
     },
     {

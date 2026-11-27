@@ -12,7 +12,7 @@ v0.9.0 原生 Kotlin + Jetpack Compose 安卓控制端，通过 BLE 连接 ESP32
 
 **兼容性注意：** 目标为 Android 8+、固件协议 1。旧固件虽然 BLE 缓冲为 4096 字节，但队列会把 JSON 截到 511 字节。v0.6.0 已在固件源码修复，并由 `hello.maxCommandBytes` 声明 4095 字节 JSON 上限。APK 对没有该能力字段的旧固件按 511 字节限制，在表单中拒绝过长配置。较长微信凭据请先编译并刷入修复后的固件。
 
-本地验证版使用配套的 `MoonCheck-0.9.0-android-debug.apk`，构建方法见下文。从 [v0.8.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载 `MoonCheck-0.8.0-android-debug.apk` 或整套 ZIP。2026-10-29 用户确认基本功能已查验无误并授权 Latest 发行；APK 保持 Debug 签名。未提供逐板型、手机和系统明细，不推断覆盖完整兼容矩阵。
+从 [v0.9.0 发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) 下载 `MoonCheck-0.9.0-android-debug.apk` 或整套 ZIP。APK 沿用 Debug 签名和 versionCode 900。用户已确认 ESP32-S3-N16R8 配置及真实打卡成功，具体手机与客户端组合仍待验证。
 
 ## 运行状态与开发者选项（0.7.0 起）
 

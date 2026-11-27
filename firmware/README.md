@@ -1,6 +1,6 @@
 # 自行编译固件
 
-> 已发布版本为 v0.8.0（Latest），已通过当时的基本功能验收。当前源码构建 v0.9.0 小组确认版，四种实验板型仍待实机验证。详见[板型支持矩阵](../docs/board-support.md)。下载[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0)含固件、Android Debug APK 与电脑 BLE 控制台源码。
+> 当前发行版为 v0.9.0。ESP32-S3-N16R8 已由用户确认配置及真实打卡成功，ESP32-WROOM-32 已通过构建和镜像校验。见[板型支持矩阵](../docs/board-support.md)和[发行包](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0)。
 
 ---
 

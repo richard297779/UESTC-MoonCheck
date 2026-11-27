@@ -2,7 +2,7 @@
 
 > 如果已经有支持当前平台要求的固件文件，不需要安装 PlatformIO 或编译；用 Chrome / Edge 的网页烧录工具即可，全程约 3 分钟。
 >
-> **已发布版本为 v0.8.0。小组确认使用当前源码构建的 v0.9.0 本地验证版。** v0.8.0 已确认基本功能，四实验板型未经实测。从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.8.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK 和电脑 BLE 控制台源码；APK 安装到手机，不能当成固件刷入开发板。
+> **当前发行版为 v0.9.0。** ESP32-S3-N16R8 已由用户确认配置和真实打卡成功，ESP32-WROOM-32 已通过构建及镜像校验。从[发行页](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) 下载对应板型的固件，也可[自行编译](../firmware/README.md)。整套 ZIP 还含 Android 测试 APK 和电脑 BLE 控制台源码；APK 安装到手机，不能当成固件刷入开发板。
 
 ---
 
