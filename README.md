@@ -1,6 +1,3 @@
-**喜报**
-由于muyuhuanghun大佬的技术实现，本项目又活过来了
-
 # 🌙 MoonCheck
 
 **ESP32 晚安成电打卡终端** · [v0.9.0 最新发行](https://github.com/richard297779/UESTC-MoonCheck/releases/tag/v0.9.0) · [独立桌面版](desktop/README.md)
